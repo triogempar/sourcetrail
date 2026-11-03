@@ -40,8 +40,40 @@ export function isBoilerplate(text: string): boolean {
   return pipes >= 8 && trimmed.length < 500;
 }
 
+export function flattenMarkdownTables(text: string): string {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const out: string[] = [];
+  let table: string[] = [];
+  const flush = () => {
+    if (table.length === 0) return;
+    out.push(table.join("\n"));
+    table = [];
+  };
+  for (const line of lines) {
+    const rendered = renderTableLine(line);
+    if (rendered === undefined) {
+      flush();
+      out.push(line);
+    } else if (rendered) {
+      table.push(rendered);
+    }
+  }
+  flush();
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function renderTableLine(line: string): string | null | undefined {
+  const pipes = line.match(/\|/g)?.length ?? 0;
+  if (pipes < 2) return undefined;
+  const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+  if (cells.length < 2) return undefined;
+  if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) return null;
+  if (cells.length === 2) return `${cells[0]}: ${cells[1]}`;
+  return cells.join(" — ");
+}
+
 export function passagesFromDocument(raw: string, query: string): string[] {
-  const text = raw.replace(/\r/g, "").trim();
+  const text = flattenMarkdownTables(raw).trim();
   if (text.length < 40) return [];
   const parts = text
     .split(/\n{2,}|\[\s*\.\.\.\s*\]/g)
@@ -97,7 +129,7 @@ export function buildPassages(input: {
       });
       continue;
     }
-    const snippet = hit.content.trim();
+    const snippet = flattenMarkdownTables(hit.content).trim();
     if (isBoilerplate(snippet) || (document && isBoilerplate(document.rawContent) && isBoilerplate(snippet))) {
       notes.push({
         url: hit.url,

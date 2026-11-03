@@ -1,9 +1,9 @@
 import { CreditLedger, extractCreditCost } from "@/lib/credits";
 import { isAbort, isTerminalProviderError, providerMessage, SchemaError } from "@/lib/errors";
-import { completeJson } from "@/lib/json";
+import { asCompletion, completeJson } from "@/lib/json";
 import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
-import { parseDraft, parsePlan, parseRewrite, readVerdicts, type ModelVerdict } from "@/lib/schema";
+import { parseDraft, parsePlan, parseRewrite, readVerdicts, salvageDraft, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
 import { clip, heuristicRewrite, publisherFromUrl, uniqueGaps } from "@/lib/text";
 import type {
@@ -243,6 +243,7 @@ export async function runResearch(
       maxTokens: deps.tokens.write,
       signal,
       validate: parseDraft,
+      recover: salvageDraft,
     });
     emit({
       type: "trail",
@@ -295,6 +296,7 @@ export async function runResearch(
       modelVerdicts,
       mode: deps.mode,
       modelError,
+      language: plan.language,
     });
     const gaps = uniqueGaps([...adjudicated.gaps, ...searchGaps]);
     const brief: Brief = {
@@ -351,11 +353,11 @@ export async function runResearch(
       maxTokens,
       signal,
     });
-    const first = await ask(pair.user);
-    const parsed = readVerdicts(first);
+    const first = asCompletion(await ask(pair.user));
+    const parsed = readVerdicts(first.content);
     if (parsed.length > 0) return parsed;
-    const second = await ask(`${pair.user}\n\nYour previous reply was truncated or invalid. Reply with one JSON object only. Each reason is at most 8 words.\n\nPrevious reply:\n${clip(first, 1200)}`);
-    const repaired = readVerdicts(second);
+    const second = asCompletion(await ask(`${pair.user}\n\nYour previous reply was truncated or invalid. Reply with one JSON object only. Each reason is at most 8 words.\n\nPrevious reply:\n${clip(first.content, 1200)}`));
+    const repaired = readVerdicts(second.content);
     if (repaired.length > 0) return repaired;
     throw new SchemaError("The model returned invalid JSON twice.");
   }

@@ -47,12 +47,14 @@ export function writePrompt(input: {
     .join("\n\n");
   return {
     system: [
-      "You write a short research brief grounded only in the passages below.",
-      `Write every user-facing string in the language of the question. Language: ${input.language}.`,
-      "Answer the question in lede first. Put supporting points in sections.",
-      "kind fact is allowed only when the cited passages state it. Copy figures and names exactly. Every fact needs citation ids such as p1.",
-      "Do not inherit the source's first person. If a passage says we, our, or I, name the publisher in the sentence, for example 'Harbor Desk called both figures highs for its poll.' Do not write 'highs for our poll' as if this notebook ran the poll.",
-      "The headline is a finished phrase. Do not end it with an ellipsis or a cut-off word.",
+      "You write a short research brief grounded only in the stored sources below.",
+      `Write every user-facing string, including section headings, in the language of the question. Language: ${input.language}.`,
+      "Stay compact: at most 6 sentences in the whole brief, each under 220 characters. Answer in lede first.",
+      "kind fact is allowed only when the cited sources state it. Copy figures and names exactly. Every fact needs citation ids such as p1.",
+      "Name the publisher in ordinary prose. Never paste a raw domain, URL, or the word passage. Bad: 'Passage dari repository1.example.ac.id menyebut'. Good: 'Jurnal Kesehatan melaporkan'.",
+      "Do not inherit the source's first person. If a source says we, our, or I, attribute it, for example 'Harbor Desk called both figures highs for its poll.'",
+      "The headline is a finished phrase in the question language. Do not end it with an ellipsis or a cut-off word.",
+      "Do not repeat a sentence in a later section.",
       "kind inference is a conclusion the passages support without stating it in those words. An inference must not add numbers, dates, or names absent from the passages.",
       "If two passages make incompatible claims, put both in conflicts and do not pick a winner.",
       "If the passages do not answer the question, set insufficient true, keep lede empty or limited to what the passages literally say, and list the gaps.",
@@ -60,7 +62,7 @@ export function writePrompt(input: {
       JSON_ONLY,
       `Schema: {"headline":"...","insufficient":false,"lede":[{"text":"...","kind":"fact","citations":["p1"]}],"sections":[{"heading":"...","sentences":[]}],"conflicts":[{"topic":"...","sides":[{"label":"...","sentences":[{"text":"...","kind":"fact","citations":["p2"]}]}]}],"gaps":["..."]}`,
     ].join(" "),
-    user: `Question:\n${input.question}\n\nPassages:\n${passages}`,
+    user: `Question:\n${input.question}\n\nSources:\n${passages}`,
   };
 }
 

@@ -48,6 +48,36 @@ describe("assessSupport", () => {
     expect(result.level).toBe("supported");
   });
 
+  it("ignores digits inside a hostname", () => {
+    const result = assessSupport(
+      "Jurnal di repository1.stikeselisabethmedan.ac.id dan jurnal2.globalhealthsciencegroup.com tidak menemukan kenaikan risiko hipertensi pada orang dewasa.",
+      ["Studi kohort tidak menemukan kenaikan risiko hipertensi pada orang dewasa."],
+    );
+    expect(result.reason).not.toMatch(/figure/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("accepts 84 percent when the table cell is a bare 84", () => {
+    const result = assessSupport(
+      "The economy was the top issue for 84% of registered voters.",
+      ["| Issue | Share |\n| --- | --- |\n| The economy | 84 |\n| Immigration | 61 |"],
+    );
+    expect(result.reason).not.toMatch(/figure 84/);
+  });
+
+  it("accepts a margin that is the gap in 52-45 or the word seven", () => {
+    const fromRange = assessSupport(
+      "The margin was 7 points.",
+      ["The published horse race was 52-45."],
+    );
+    const fromWord = assessSupport(
+      "The margin was 7 points.",
+      ["The lead was a seven percentage point edge."],
+    );
+    expect(fromRange.reason).not.toMatch(/figure 7/);
+    expect(fromWord.reason).not.toMatch(/figure 7/);
+  });
+
   it("treats 26/27 and 2026/27 as the same season figure", () => {
     const result = assessSupport(
       "The 26/27 figure was 12 percent.",

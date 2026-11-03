@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { completeJson, extractJson } from "@/lib/json";
-import { parsePlan } from "@/lib/schema";
-import type { Llm } from "@/lib/types";
+import { closeTruncatedJson, completeJson, extractJson } from "@/lib/json";
+import { parsePlan, salvageDraft } from "@/lib/schema";
+import { naturalizeSentence } from "@/lib/text";
+import type { Llm, LlmCompletion } from "@/lib/types";
 
 describe("extractJson", () => {
   it("reads a fenced object and repairs a trailing comma", () => {
@@ -54,5 +55,44 @@ describe("completeJson", () => {
       validate: parsePlan,
     })).rejects.toThrow(/invalid JSON twice/);
     expect(n).toBe(2);
+  });
+
+  it("retries a length-cut reply with a higher token budget and can salvage it", async () => {
+    const calls: number[] = [];
+    const truncated = '{"headline":"Kopi tidak menaikkan risiko hipertensi","insufficient":false,"lede":[{"text":"Studi kohort tidak menemukan kenaikan risiko hipertensi pada orang dewasa.","kind":"fact","citations":["p1"]}],"sections":[{"heading":"Catatan","sentences":[{"text":"Sampel';
+    const llm: Llm = {
+      async complete(input): Promise<LlmCompletion> {
+        calls.push(input.maxTokens);
+        if (calls.length === 1) return { content: truncated, finishReason: "length" };
+        return { content: "still not json", finishReason: "stop" };
+      },
+    };
+    const draft = await completeJson({
+      llm,
+      task: "write",
+      model: "deepseek-ai/DeepSeek-V4.1-Flash",
+      system: "sys",
+      user: "Question",
+      maxTokens: 3200,
+      validate: (data) => {
+        if (!data || typeof data !== "object" || !("headline" in data)) throw new Error("no headline");
+        return data as { headline: string };
+      },
+      recover: (text) => {
+        const saved = salvageDraft(text);
+        return saved ? { headline: saved.headline } : null;
+      },
+    });
+    expect(draft.headline).toMatch(/Kopi tidak/);
+    expect(calls[1]).toBeGreaterThan(calls[0] ?? 0);
+    expect(closeTruncatedJson(truncated)).toMatchObject({ headline: "Kopi tidak menaikkan risiko hipertensi" });
+  });
+});
+
+describe("natural attribution", () => {
+  it("removes the internal word passage from an Indonesian opener", () => {
+    expect(naturalizeSentence("Passage dari Jurnal Kesehatan menyebut bahwa konsumsi kopi tidak menaikkan risiko.")).toBe(
+      "Jurnal Kesehatan: konsumsi kopi tidak menaikkan risiko.",
+    );
   });
 });

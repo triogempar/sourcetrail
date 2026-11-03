@@ -61,7 +61,7 @@ What the code enforces on every request:
 | Request body | 8 KB | 8 KB |
 | Plan `max_tokens` | 700 | 1,200 |
 | Rewrite `max_tokens` | 160 | 300 |
-| Write `max_tokens` | 1,600 | 2,500 |
+| Write `max_tokens` | 3,200 | 4,000 |
 | Verify `max_tokens` | 1,600 | 2,400 |
 | Function `maxDuration` | 180 seconds | Hobby limit is 300 seconds |
 | Search rounds per line | 2 | 2 |
@@ -132,7 +132,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SOURCETRAIL_MAX_QUESTION_LENGTH` | No | Default 500. |
 | `SOURCETRAIL_MAX_TOKENS_PLAN` | No | Default 700. |
 | `SOURCETRAIL_MAX_TOKENS_REWRITE` | No | Default 160. |
-| `SOURCETRAIL_MAX_TOKENS_WRITE` | No | Default 1600. |
+| `SOURCETRAIL_MAX_TOKENS_WRITE` | No | Default 3,200. A reply cut off at the limit is retried shorter, then salvaged if the opening of the JSON is still usable. |
 | `SOURCETRAIL_MAX_TOKENS_VERIFY` | No | Default 1,600. Verdicts are also checked in batches of 8, and each reason is limited to 8 words, so a long brief is not cut off mid-JSON. |
 
 Checks:

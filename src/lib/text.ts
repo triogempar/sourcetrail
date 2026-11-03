@@ -65,9 +65,32 @@ const FUNCTION_WORDS = new Set([
   "kita", "saya", "anda", "hal", "hasilnya", "demikian", "oleh karena",
 ]);
 
+const NUMBER_WORDS: Record<string, string[]> = {
+  "0": ["zero", "nol"],
+  "1": ["one", "satu"],
+  "2": ["two", "dua"],
+  "3": ["three", "tiga"],
+  "4": ["four", "empat"],
+  "5": ["five", "lima"],
+  "6": ["six", "enam"],
+  "7": ["seven", "tujuh"],
+  "8": ["eight", "delapan"],
+  "9": ["nine", "sembilan"],
+  "10": ["ten", "sepuluh"],
+  "11": ["eleven", "sebelas"],
+  "12": ["twelve", "dua belas"],
+};
+
+/** Drop URLs and hostnames so digits inside repository1.example.ac.id are not figures. */
+export function stripWebAddresses(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*)?/gi, " ");
+}
+
 /** Fold 26/27 and 2026/27 into the same season token. Other numbers stay as written. */
 export function numberTokens(text: string): string[] {
-  const normalized = text.toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(percent|per cent)/g, "$1%");
+  const normalized = stripWebAddresses(text).toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(percent|per cent)/g, "$1%");
   const seasons: string[] = [];
   const withoutSeasons = normalized.replace(/\b(\d{2}|\d{4})\s*[/\u2013-]\s*(\d{2})\b/g, (match, left: string, right: string) => {
     const leftYear = Number(left.length === 4 ? left.slice(-2) : left);
@@ -80,6 +103,38 @@ export function numberTokens(text: string): string[] {
   });
   const singles = withoutSeasons.match(/-?\d+(?:\.\d+)?%?/g) ?? [];
   return [...seasons, ...singles];
+}
+
+export function numberSatisfied(token: string, passage: string): boolean {
+  const available = new Set(numberTokens(passage));
+  if (available.has(token)) return true;
+  const bare = token.endsWith("%") ? token.slice(0, -1) : token;
+  const percent = token.endsWith("%") ? token : `${token}%`;
+  if (available.has(bare) || available.has(percent)) return true;
+  const words = NUMBER_WORDS[bare];
+  if (words?.some((word) => new RegExp(`\\b${word}\\b`, "i").test(passage))) return true;
+  const target = Number(bare);
+  if (!Number.isFinite(target) || bare.includes(".")) return false;
+  for (const match of passage.matchAll(/\b(\d+(?:\.\d+)?)\s*(?:-|–|—|to|sampai)\s*(\d+(?:\.\d+)?)\b/gi)) {
+    const diff = Math.abs(Number(match[1]) - Number(match[2]));
+    if (Math.abs(diff - target) < 0.051) return true;
+  }
+  return false;
+}
+
+export function naturalizeSentence(text: string): string {
+  return text.replace(
+    /^(?:the\s+)?passages?\s+(?:dari|from)\s+([^,:.]{2,80}?)\s+(?:menyebut(?:kan)?|menyatakan|mengatakan|melaporkan|menulis|says|said|reports|reported|notes|noted|writes|wrote)\s*(?:,|:|bahwa|that)?\s*/iu,
+    "$1: ",
+  ).trim();
+}
+
+export function loneAccountHeading(language: string): string {
+  const lang = language.toLowerCase();
+  if (/^id\b|indones/.test(lang)) return "Yang tetap tercatat";
+  if (lang.startsWith("es")) return "Lo que sí consta";
+  if (lang.startsWith("fr")) return "Ce qu'une source a rapporté";
+  return "Reported without a second account";
 }
 
 function isCapitalizedWord(word: string): boolean {

@@ -1,6 +1,6 @@
 import { assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
-import { cleanHeadline, cleanSentence, clip, nameInText, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
+import { cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -24,7 +24,7 @@ export function tagDraft(draft: DraftBrief): WorkingBrief {
     count += 1;
     return {
       id: `s${count}`,
-      text: cleanSentence(sentence.text),
+      text: naturalizeSentence(cleanSentence(sentence.text)),
       kind: sentence.kind,
       citations: dedupe(sentence.citations),
     };
@@ -76,7 +76,7 @@ function judgeSentence(
   const model = verdicts.get(sentence.id)?.verdict;
   if (sentence.kind === "inference") {
     const pool = cited.length > 0 ? cited : passages.map((passage) => passage.text);
-    const missingNumber = numberTokens(sentence.text).find((token) => !pool.some((text) => numberTokens(text).includes(token)));
+    const missingNumber = numberTokens(sentence.text).find((token) => !numberSatisfied(token, pool.join("\n")));
     if (missingNumber) {
       return { action: "drop", reason: `Inference introduces ${missingNumber}, which is not in the cited passage.` };
     }
@@ -153,6 +153,7 @@ export function adjudicate(input: {
   modelVerdicts: ModelVerdict[] | null;
   mode: "live" | "mock";
   modelError: string | null;
+  language?: string;
 }): {
   headline: string;
   insufficient: boolean;
@@ -212,8 +213,22 @@ export function adjudicate(input: {
     if (sides.length >= 2) {
       conflicts.push({ topic: conflict.topic, sides });
     } else if (sides.length === 1) {
-      sections.push({ heading: "Reported without a second account", sentences: sides[0].sentences });
-      gaps.push(`A second account of "${conflict.topic}" was struck because the passage did not support it.`);
+      const seen = new Set(
+        [...lede, ...sections.flatMap((section) => section.sentences)].map((sentence) => sentence.text.trim().toLowerCase()),
+      );
+      const fresh = sides[0].sentences.filter((sentence) => {
+        const key = sentence.text.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (fresh.length > 0) {
+        const language = input.language ?? "en";
+        sections.push({ heading: loneAccountHeading(language), sentences: fresh });
+        gaps.push(language.toLowerCase().startsWith("id") || language.toLowerCase().includes("indones")
+          ? `Satu versi tentang "${conflict.topic}" dicoret karena kutipannya tidak menopang kalimat itu.`
+          : `A second account of "${conflict.topic}" was struck because the cited text did not support it.`);
+      }
     }
   }
 

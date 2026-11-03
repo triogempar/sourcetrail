@@ -1,5 +1,5 @@
 import { SchemaError } from "@/lib/errors";
-import { extractJson } from "@/lib/json";
+import { closeTruncatedJson, extractJson } from "@/lib/json";
 import { cleanHeadline, cleanSentence, clip, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Plan, TimeRange } from "@/lib/types";
 
@@ -186,6 +186,16 @@ export function salvageVerdicts(text: string): ModelVerdict[] {
     }
   }
   return [...found.values()];
+}
+
+export function salvageDraft(text: string): DraftBrief | null {
+  const closed = closeTruncatedJson(text);
+  if (!closed) return null;
+  try {
+    return parseDraft(closed);
+  } catch {
+    return null;
+  }
 }
 
 export function readVerdicts(text: string): ModelVerdict[] {

@@ -51,8 +51,13 @@ export type LlmRequest = {
   signal?: AbortSignal;
 };
 
+export type LlmCompletion = {
+  content: string;
+  finishReason: string | null;
+};
+
 export type Llm = {
-  complete(input: LlmRequest): Promise<string>;
+  complete(input: LlmRequest): Promise<string | LlmCompletion>;
 };
 
 export type SearchRequest = {

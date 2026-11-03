@@ -136,6 +136,34 @@ describe("adjudicate", () => {
     expect(result.summary.note).toMatch(/second model did not finish/i);
   });
 
+  it("does not repeat a sentence under an Indonesian one-sided heading", () => {
+    const shared = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h.";
+    const draft = tagDraft({
+      headline: "Satu mobil Hamburg mencatat jarak 612 km",
+      insufficient: false,
+      lede: [{ text: shared, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Jarak",
+        sides: [
+          { label: "Jarak", sentences: [{ text: shared, kind: "fact", citations: ["p1"] }] },
+          { label: "Biaya", sentences: [{ text: "The pilots have already cut pack cost by 40 percent.", kind: "fact", citations: ["p1"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+    });
+    expect(result.sections.some((section) => section.heading === "Yang tetap tercatat")).toBe(false);
+    expect(result.lede.map((sentence) => sentence.text)).toContain(shared);
+  });
+
   it("lists a repeated struck sentence once", () => {
     const text = "The pilots have already cut pack cost by 40 percent.";
     const draft = tagDraft({
