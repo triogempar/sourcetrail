@@ -1,5 +1,6 @@
 import { SchemaError } from "@/lib/errors";
-import { cleanSentence, clip } from "@/lib/text";
+import { extractJson } from "@/lib/json";
+import { cleanHeadline, cleanSentence, clip, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Plan, TimeRange } from "@/lib/types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,7 +90,7 @@ function parseSentenceList(value: unknown, label: string): DraftSentence[] {
 
 export function parseDraft(data: unknown): DraftBrief {
   if (!isRecord(data)) throw new SchemaError("Brief was not a JSON object.");
-  const headline = typeof data.headline === "string" ? cleanSentence(data.headline) : "";
+  const headline = typeof data.headline === "string" ? cleanHeadline(data.headline) : "";
   if (headline.length < 8) throw new SchemaError("Brief headline is missing.");
   const ledeSource = Array.isArray(data.lede) ? data.lede : data.answer;
   const lede = parseSentenceList(ledeSource, "Lede sentence");
@@ -120,13 +121,13 @@ export function parseDraft(data: unknown): DraftBrief {
         return { topic: clip(topic || "Disagreement", 160), sides: sides.filter((side) => side.sentences.length > 0) };
       }).filter((conflict) => conflict.sides.length >= 2)
     : [];
-  const gaps = Array.isArray(data.gaps)
-    ? data.gaps
-        .filter((gap): gap is string => typeof gap === "string")
-        .map((gap) => clip(cleanSentence(gap), 320))
-        .filter((gap) => gap.length > 0)
-        .slice(0, 8)
-    : [];
+  const gaps = uniqueGaps(
+    Array.isArray(data.gaps)
+      ? data.gaps
+          .filter((gap): gap is string => typeof gap === "string")
+          .map((gap) => clip(cleanSentence(gap), 320))
+      : [],
+  );
   const insufficient = data.insufficient === true;
   const total = lede.length
     + sections.reduce((sum, section) => sum + section.sentences.length, 0)
@@ -166,4 +167,31 @@ export function parseVerdicts(data: unknown): ModelVerdict[] {
   }
   if (verdicts.length === 0) throw new SchemaError("Verdicts contained no usable sentence ids.");
   return verdicts;
+}
+
+/** Pull finished verdict objects out of a token-truncated reply. */
+export function salvageVerdicts(text: string): ModelVerdict[] {
+  const found = new Map<string, ModelVerdict>();
+  const patterns = [
+    /"id"\s*:\s*"(s\d+)"[\s\S]{0,240}?"verdict"\s*:\s*"(supported|unsupported|partial)"[\s\S]{0,200}?\}/g,
+    /"verdict"\s*:\s*"(supported|unsupported|partial)"[\s\S]{0,240}?"id"\s*:\s*"(s\d+)"[\s\S]{0,80}?\}/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const idFirst = match[1]?.startsWith("s");
+      const id = idFirst ? match[1] : match[2];
+      const verdict = idFirst ? match[2] : match[1];
+      if (!id || (verdict !== "supported" && verdict !== "unsupported" && verdict !== "partial")) continue;
+      if (!found.has(id)) found.set(id, { id, verdict, reason: "" });
+    }
+  }
+  return [...found.values()];
+}
+
+export function readVerdicts(text: string): ModelVerdict[] {
+  try {
+    return parseVerdicts(extractJson(text));
+  } catch {
+    return salvageVerdicts(text);
+  }
 }

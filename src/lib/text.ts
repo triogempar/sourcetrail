@@ -16,6 +16,24 @@ const STOP_CAPS = new Set([
   "Because", "Researchers", "Reports", "Report",
 ]);
 
+export function uniqueGaps(gaps: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const gap of gaps) {
+    const trimmed = gap.trim();
+    const key = trimmed.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trimmed);
+    if (unique.length >= 8) break;
+  }
+  return unique;
+}
+
+export function cleanHeadline(text: string): string {
+  return cleanSentence(text).replace(/(?:\u2026|\.{3,})\s*$/u, "").trim();
+}
+
 export function clip(text: string, max: number): string {
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;
@@ -35,23 +53,84 @@ export function contentWords(text: string): string[] {
   return words.filter((word) => word.length >= 4 && !STOP.has(word));
 }
 
+const FUNCTION_WORDS = new Set([
+  ...STOP,
+  ...[...STOP_CAPS].map((word) => word.toLowerCase()),
+  "berdasarkan", "menurut", "dalam", "pada", "untuk", "dengan", "bahwa", "ini", "itu",
+  "dan", "atau", "tetapi", "namun", "serta", "dari", "yang", "adalah", "hasil", "studi",
+  "penelitian", "para", "sebuah", "beberapa", "tidak", "juga", "oleh", "akan", "dapat",
+  "bisa", "telah", "sudah", "masih", "secara", "antara", "terhadap", "karena", "jika",
+  "ketika", "setelah", "sebelum", "selain", "meski", "meskipun", "walau", "walaupun",
+  "jadi", "maka", "lalu", "selama", "tanpa", "atas", "bagi", "para", "mereka", "kami",
+  "kita", "saya", "anda", "hal", "hasilnya", "demikian", "oleh karena",
+]);
+
+/** Fold 26/27 and 2026/27 into the same season token. Other numbers stay as written. */
 export function numberTokens(text: string): string[] {
   const normalized = text.toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(percent|per cent)/g, "$1%");
-  return normalized.match(/-?\d+(?:\.\d+)?%?/g) ?? [];
+  const seasons: string[] = [];
+  const withoutSeasons = normalized.replace(/\b(\d{2}|\d{4})\s*[/\u2013-]\s*(\d{2})\b/g, (match, left: string, right: string) => {
+    const leftYear = Number(left.length === 4 ? left.slice(-2) : left);
+    const rightYear = Number(right);
+    if ((leftYear + 1) % 100 === rightYear) {
+      seasons.push(`${String(leftYear).padStart(2, "0")}/${right}`);
+      return " ";
+    }
+    return match;
+  });
+  const singles = withoutSeasons.match(/-?\d+(?:\.\d+)?%?/g) ?? [];
+  return [...seasons, ...singles];
+}
+
+function isCapitalizedWord(word: string): boolean {
+  const first = word.charAt(0);
+  return first !== first.toLowerCase() && first === first.toUpperCase();
 }
 
 export function properNouns(sentence: string): string[] {
-  const matches = sentence.match(/\b[A-Z][a-zA-Z]{2,}\b/g) ?? [];
+  const clauses = sentence.split(/(?<=[.!?])\s+/);
   const seen = new Set<string>();
   const nouns: string[] = [];
-  for (const word of matches) {
-    if (STOP_CAPS.has(word)) continue;
-    const key = word.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    nouns.push(word);
+  for (const clause of clauses) {
+    const words = clause.match(/\p{L}[\p{L}'’-]*/gu) ?? [];
+    const rest = words.slice(1);
+    let index = 0;
+    while (index < rest.length) {
+      const word = rest[index] ?? "";
+      if (!isCapitalizedWord(word) || FUNCTION_WORDS.has(word.toLowerCase())) {
+        index += 1;
+        continue;
+      }
+      const phrase = [word];
+      let next = index + 1;
+      while (next < rest.length) {
+        const follow = rest[next] ?? "";
+        if (!isCapitalizedWord(follow) || FUNCTION_WORDS.has(follow.toLowerCase())) break;
+        phrase.push(follow);
+        next += 1;
+      }
+      const label = phrase.join(" ");
+      const key = label.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        nouns.push(label);
+      }
+      index = next;
+    }
   }
   return nouns;
+}
+
+export function nameInText(name: string, passage: string): boolean {
+  if (hasWord(passage, name)) return true;
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return false;
+  const phrase = parts.map((part) => escapeRegExp(part)).join("\\W+");
+  if (new RegExp(phrase, "i").test(passage)) return true;
+  const initials = parts.map((part) => part.charAt(0)).join("");
+  if (new RegExp(`\\b${initials}\\b`, "i").test(passage)) return true;
+  const dotted = parts.map((part) => `${escapeRegExp(part.charAt(0))}\\.`).join("\\s*");
+  return new RegExp(`\\b${dotted}`, "i").test(passage);
 }
 
 export function hasWord(haystack: string, word: string): boolean {

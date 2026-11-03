@@ -32,6 +32,10 @@ export function isTimeout(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || (error.name === "AbortError" && /timeout/i.test(error.message)));
 }
 
+export function isTerminalProviderError(error: unknown): boolean {
+  return error instanceof ProviderError && (error.status === 401 || error.status === 402 || error.status === 403 || error.status === 429);
+}
+
 export function providerMessage(error: unknown): string {
   if (error instanceof ProviderError || error instanceof SchemaError || error instanceof ConfigError) {
     return error.message;

@@ -15,14 +15,41 @@ function overlapScore(chunk: string, query: string): number {
   return contentWords(chunk).filter((word) => wanted.has(word)).length;
 }
 
+const BOILERPLATE = [
+  /subscribe to continue/i,
+  /subscribe now to read/i,
+  /already a subscriber/i,
+  /sign in to continue/i,
+  /to continue reading/i,
+  /this (?:article|content) is (?:for|available to) subscribers/i,
+  /create an account to (?:read|continue)/i,
+  /enable javascript and cookies/i,
+  /accept all cookies/i,
+  /we use cookies/i,
+  /cookie settings/i,
+  /privacy preference/i,
+];
+
+export function isBoilerplate(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 40) return false;
+  const hits = BOILERPLATE.filter((pattern) => pattern.test(trimmed)).length;
+  if (hits >= 2) return true;
+  if (hits >= 1 && contentWords(trimmed).length < 80) return true;
+  const pipes = trimmed.match(/\|/g)?.length ?? 0;
+  return pipes >= 8 && trimmed.length < 500;
+}
+
 export function passagesFromDocument(raw: string, query: string): string[] {
   const text = raw.replace(/\r/g, "").trim();
   if (text.length < 40) return [];
   const parts = text
     .split(/\n{2,}|\[\s*\.\.\.\s*\]/g)
     .map((part) => part.replace(/\s+/g, " ").trim())
-    .filter((part) => part.length >= 40);
-  const chunks = parts.length > 0 ? parts : [text.replace(/\s+/g, " ").trim()];
+    .filter((part) => part.length >= 40 && !isBoilerplate(part));
+  const whole = text.replace(/\s+/g, " ").trim();
+  const chunks = parts.length > 0 ? parts : (!isBoilerplate(whole) && whole.length >= 40 ? [whole] : []);
+  if (chunks.length === 0) return [];
   const scored = chunks.map((chunk, index) => ({
     chunk: clip(chunk, 900),
     index,
@@ -71,7 +98,16 @@ export function buildPassages(input: {
       continue;
     }
     const snippet = hit.content.trim();
-    if (snippet.length >= 40 && passages.length < 10) {
+    if (isBoilerplate(snippet) || (document && isBoilerplate(document.rawContent) && isBoilerplate(snippet))) {
+      notes.push({
+        url: hit.url,
+        title: hit.title,
+        status: "failed",
+        detail: "Discarded paywall or site boilerplate.",
+      });
+      continue;
+    }
+    if (snippet.length >= 40 && !isBoilerplate(snippet) && passages.length < 10) {
       passages.push(makePassage(passages.length + 1, hit, clip(snippet, 900), "snippet"));
       const failure = failures.get(url);
       notes.push({

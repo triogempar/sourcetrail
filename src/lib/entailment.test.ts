@@ -29,6 +29,33 @@ describe("assessSupport", () => {
     const result = assessSupport("The Hamburg pilot reported wide public interest after the test.", [PASSAGE]);
     expect(result.level).toBe("partial");
   });
+
+  it("keeps a sentence-initial Indonesian word that is not a name", () => {
+    const passage = "Studi kohort tersebut menemukan konsumsi kopi harian tidak menaikkan risiko hipertensi pada orang dewasa.";
+    const result = assessSupport(
+      "Berdasarkan studi kohort tersebut, konsumsi kopi harian tidak menaikkan risiko hipertensi pada orang dewasa.",
+      [passage],
+    );
+    expect(result.level).not.toBe("unsupported");
+    expect(result.reason).not.toMatch(/Berdasarkan/);
+  });
+
+  it("accepts United States when the passage says U.S.", () => {
+    const result = assessSupport(
+      "A national poll in the United States found both highs for the sample.",
+      ["A national poll in the U.S. found both highs for the sample."],
+    );
+    expect(result.level).toBe("supported");
+  });
+
+  it("treats 26/27 and 2026/27 as the same season figure", () => {
+    const result = assessSupport(
+      "The 26/27 figure was 12 percent.",
+      ["The 2026/27 figure was 12 percent."],
+    );
+    expect(result.level).not.toBe("unsupported");
+    expect(result.reason).not.toMatch(/26/);
+  });
 });
 
 describe("findSupportSpan", () => {

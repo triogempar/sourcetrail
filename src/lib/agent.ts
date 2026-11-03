@@ -1,14 +1,15 @@
 import { CreditLedger, extractCreditCost } from "@/lib/credits";
-import { isAbort, providerMessage } from "@/lib/errors";
+import { isAbort, isTerminalProviderError, providerMessage, SchemaError } from "@/lib/errors";
 import { completeJson } from "@/lib/json";
 import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
-import { parseDraft, parsePlan, parseRewrite, parseVerdicts } from "@/lib/schema";
+import { parseDraft, parsePlan, parseRewrite, readVerdicts, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
-import { heuristicRewrite, publisherFromUrl } from "@/lib/text";
+import { clip, heuristicRewrite, publisherFromUrl, uniqueGaps } from "@/lib/text";
 import type {
   AgentDeps,
   Brief,
+  Passage,
   Plan,
   ResearchEvent,
   SearchHit,
@@ -260,21 +261,21 @@ export async function runResearch(
     let modelError: string | null = null;
     emit({ type: "phase", phase: "verify", message: "Checking each sentence against its passage" });
     if (facts.length > 0) {
-      try {
-        const verifyPair = verifyPrompt(facts, passages);
-        modelVerdicts = await completeJson({
-          llm: deps.llm,
-          task: "verify",
-          model: deps.models.verify,
-          system: verifyPair.system,
-          user: verifyPair.user,
-          maxTokens: deps.tokens.verify,
-          signal,
-          validate: parseVerdicts,
-        });
-      } catch (error) {
-        if (isAbort(error)) throw error;
-        modelError = providerMessage(error);
+      const collected = [];
+      const problems: string[] = [];
+      for (let index = 0; index < facts.length; index += 8) {
+        const batch = facts.slice(index, index + 8);
+        throwIfAborted(signal);
+        try {
+          collected.push(...await verifyBatch(batch, passages));
+        } catch (error) {
+          if (isAbort(error) || isTerminalProviderError(error)) throw error;
+          problems.push(providerMessage(error));
+        }
+      }
+      if (collected.length > 0) modelVerdicts = collected;
+      else if (problems[0]) {
+        modelError = problems[0];
         emit({
           type: "trail",
           entry: {
@@ -295,10 +296,7 @@ export async function runResearch(
       mode: deps.mode,
       modelError,
     });
-    const gaps = [...adjudicated.gaps];
-    for (const note of searchGaps) {
-      if (!gaps.includes(note)) gaps.push(note);
-    }
+    const gaps = uniqueGaps([...adjudicated.gaps, ...searchGaps]);
     const brief: Brief = {
       question,
       headline: adjudicated.headline,
@@ -307,7 +305,7 @@ export async function runResearch(
       lede: adjudicated.lede,
       sections: adjudicated.sections,
       conflicts: adjudicated.conflicts,
-      gaps: gaps.slice(0, 8),
+      gaps,
       searched: searchedLog,
       passages,
       models: { ...deps.models, mode: deps.mode },
@@ -340,6 +338,26 @@ export async function runResearch(
     emit({ type: "error", phase: "inquiry", message, fatal: true });
     emit({ type: "done", credits: ledger.spent, cap: ledger.cap, insufficient: false, failed: true });
     return { brief: null, summary: null, error: message, credits: ledger.spent };
+  }
+
+  async function verifyBatch(batch: ReturnType<typeof listWorkingSentences>, sourcePassages: Passage[]): Promise<ModelVerdict[]> {
+    const pair = verifyPrompt(batch, sourcePassages);
+    const maxTokens = Math.min(deps.tokens.verify, 240 + batch.length * 80);
+    const ask = (user: string) => deps.llm.complete({
+      task: "verify",
+      model: deps.models.verify,
+      system: pair.system,
+      user,
+      maxTokens,
+      signal,
+    });
+    const first = await ask(pair.user);
+    const parsed = readVerdicts(first);
+    if (parsed.length > 0) return parsed;
+    const second = await ask(`${pair.user}\n\nYour previous reply was truncated or invalid. Reply with one JSON object only. Each reason is at most 8 words.\n\nPrevious reply:\n${clip(first, 1200)}`);
+    const repaired = readVerdicts(second);
+    if (repaired.length > 0) return repaired;
+    throw new SchemaError("The model returned invalid JSON twice.");
   }
 
   async function searchLine(sq: SubQuestion): Promise<SubqResult> {
@@ -425,7 +443,7 @@ export async function runResearch(
         if (ledger.remaining(EXTRACT_HOLD) < 1) break;
         query = await rewrite(sq, query, "The results were empty or weak.");
       } catch (caught) {
-        if (isAbort(caught)) throw caught;
+        if (isAbort(caught) || isTerminalProviderError(caught)) throw caught;
         error = providerMessage(caught);
         emit({
           type: "trail",
@@ -492,14 +510,20 @@ function sourceRow(hit: SearchHit, decision: TrailSource["decision"], reason: st
 }
 
 function searchNotes(results: SubqResult[]): string[] {
-  return results.flatMap((result) => {
-    if (result.queries.length === 0) return [`"${result.sq.question}" was not searched because the credit cap was reached.`];
-    if (result.error && result.hits.length === 0) return [`"${result.sq.question}" failed: ${result.error}`];
-    if (isWeak(result.hits)) {
-      return [`"${result.sq.question}" returned no strong page after ${result.queries.length} search${result.queries.length === 1 ? "" : "es"}.`];
-    }
-    return [];
-  });
+  const notes: string[] = [];
+  const skipped = results.filter((result) => result.queries.length === 0).length;
+  const failed = results.filter((result) => result.error && result.hits.length === 0);
+  const weak = results.filter((result) => result.queries.length > 0 && isWeak(result.hits) && !(result.error && result.hits.length === 0));
+  if (skipped > 0) {
+    notes.push(`${skipped} ${skipped === 1 ? "line was" : "lines were"} not searched because the credit cap was reached.`);
+  }
+  if (failed.length > 0) {
+    notes.push(`${failed.length} ${failed.length === 1 ? "line" : "lines"} of inquiry failed: ${failed[0]?.error ?? "the search failed"}.`);
+  }
+  if (weak.length > 0) {
+    notes.push(`${weak.length} ${weak.length === 1 ? "line" : "lines"} of inquiry returned no strong page.`);
+  }
+  return notes;
 }
 
 function blankBrief(

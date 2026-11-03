@@ -49,6 +49,9 @@ function intInRange(name: string, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, Math.floor(parsed)));
 }
 
+export const DEFAULT_NEBIUS_TIMEOUT_MS = 40_000;
+export const DEFAULT_VERIFY_TOKENS = 1_600;
+
 export function resolveModels(): { primary: string; verify: string } {
   const primary = read("NEBIUS_MODEL") || "deepseek-ai/DeepSeek-V4.1-Flash";
   const requested = read("NEBIUS_VERIFY_MODEL") || "Qwen/Qwen3-235B-A22B-Instruct-2507";
@@ -74,9 +77,9 @@ export function getConfig(): RuntimeConfig {
       plan: intInRange("SOURCETRAIL_MAX_TOKENS_PLAN", 700, 200, 1200),
       rewrite: intInRange("SOURCETRAIL_MAX_TOKENS_REWRITE", 160, 60, 300),
       write: intInRange("SOURCETRAIL_MAX_TOKENS_WRITE", 1600, 400, 2500),
-      verify: intInRange("SOURCETRAIL_MAX_TOKENS_VERIFY", 900, 200, 1500),
+      verify: intInRange("SOURCETRAIL_MAX_TOKENS_VERIFY", DEFAULT_VERIFY_TOKENS, 400, 2400),
     },
-    nebiusTimeoutMs: intInRange("NEBIUS_TIMEOUT_MS", 25000, 5000, 40000),
+    nebiusTimeoutMs: intInRange("NEBIUS_TIMEOUT_MS", DEFAULT_NEBIUS_TIMEOUT_MS, 5000, 55_000),
     tavilySearchTimeoutMs: intInRange("TAVILY_SEARCH_TIMEOUT_MS", 14000, 4000, 30000),
     tavilyExtractTimeoutMs: intInRange("TAVILY_EXTRACT_TIMEOUT_MS", 18000, 4000, 30000),
     perHour: intInRange("SOURCETRAIL_RATE_LIMIT_PER_HOUR", 6, 1, 24),

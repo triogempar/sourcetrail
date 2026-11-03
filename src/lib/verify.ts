@@ -1,6 +1,6 @@
 import { assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
-import { cleanSentence, clip, hasWord, numberTokens, properNouns } from "@/lib/text";
+import { cleanHeadline, cleanSentence, clip, nameInText, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -30,7 +30,7 @@ export function tagDraft(draft: DraftBrief): WorkingBrief {
     };
   };
   return {
-    headline: clip(cleanSentence(draft.headline), 180) || "Research brief",
+    headline: clip(cleanHeadline(draft.headline), 180) || "Research brief",
     insufficient: draft.insufficient,
     lede: draft.lede.map(tag),
     sections: draft.sections.map((section) => ({
@@ -48,7 +48,7 @@ export function tagDraft(draft: DraftBrief): WorkingBrief {
           .filter((side) => side.sentences.length > 0),
       }))
       .filter((conflict) => conflict.sides.length >= 2),
-    gaps: dedupe(draft.gaps.map((gap) => clip(cleanSentence(gap), 320)).filter(Boolean)).slice(0, 8),
+    gaps: uniqueGaps(draft.gaps.map((gap) => clip(cleanSentence(gap), 320))),
   };
 }
 
@@ -80,7 +80,7 @@ function judgeSentence(
     if (missingNumber) {
       return { action: "drop", reason: `Inference introduces ${missingNumber}, which is not in the cited passage.` };
     }
-    const missingName = properNouns(sentence.text).find((name) => !pool.some((text) => hasWord(text, name)));
+    const missingName = properNouns(sentence.text).find((name) => !pool.some((text) => nameInText(name, text)));
     if (missingName) {
       return { action: "drop", reason: `Inference introduces ${missingName}, which is not in the cited passage.` };
     }
@@ -164,6 +164,7 @@ export function adjudicate(input: {
 } {
   const verdicts = new Map((input.modelVerdicts ?? []).map((verdict) => [verdict.id, verdict]));
   const dropped: { text: string; reason: string }[] = [];
+  const droppedKeys = new Set<string>();
   let supported = 0;
   let flagged = 0;
   let inferences = 0;
@@ -175,7 +176,11 @@ export function adjudicate(input: {
     const judgement = judgeSentence(sentence, input.passages, verdicts);
     if (judgement.action === "drop") {
       if (verdicts.get(sentence.id)?.verdict === "supported" && sentence.kind === "fact") droppedOverride = true;
-      dropped.push({ text: sentence.text, reason: judgement.reason });
+      const key = sentence.text.trim().toLowerCase();
+      if (!droppedKeys.has(key)) {
+        droppedKeys.add(key);
+        dropped.push({ text: sentence.text, reason: judgement.reason });
+      }
       return null;
     }
     if (sentence.kind === "inference") inferences += 1;
@@ -241,7 +246,7 @@ export function adjudicate(input: {
     lede: ledeOut,
     sections: sectionsOut,
     conflicts: conflictsOut,
-    gaps: dedupe(gaps).slice(0, 8),
+    gaps: uniqueGaps(gaps),
     summary: {
       checked,
       supported,

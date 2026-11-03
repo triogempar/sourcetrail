@@ -47,6 +47,7 @@ export type LlmRequest = {
   system: string;
   user: string;
   maxTokens: number;
+  timeoutMs?: number;
   signal?: AbortSignal;
 };
 

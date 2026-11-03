@@ -1,6 +1,61 @@
 import { isAbort, isTimeout, ProviderError } from "@/lib/errors";
 import { clip, withTimeout } from "@/lib/text";
-import type { Llm, LlmRequest } from "@/lib/types";
+import type { Llm, LlmRequest, LlmTask } from "@/lib/types";
+
+export function modelThinksByDefault(model: string): boolean {
+  const id = model.toLowerCase();
+  return id.includes("deepseek") || id.includes("qwen3") || id.includes("qwq") || id.includes("thinking");
+}
+
+export function timeoutForTask(task: LlmTask, budgetMs: number): number {
+  if (task === "rewrite") return Math.min(budgetMs, 20_000);
+  if (task === "plan") return Math.min(budgetMs, 30_000);
+  return Math.min(budgetMs, 45_000);
+}
+
+export function buildChatCompletionBody(input: {
+  model: string;
+  system: string;
+  user: string;
+  maxTokens: number;
+  temperature: number;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: input.model,
+    messages: [
+      { role: "system", content: input.system },
+      { role: "user", content: input.user },
+    ],
+    temperature: input.temperature,
+    max_tokens: input.maxTokens,
+    stream: false,
+  };
+  if (modelThinksByDefault(input.model)) {
+    body.chat_template_kwargs = { thinking: false };
+  }
+  return body;
+}
+
+export function readReasoningTokens(data: unknown): number {
+  if (!data || typeof data !== "object") return 0;
+  const usage = (data as { usage?: unknown }).usage;
+  if (usage && typeof usage === "object") {
+    const details = (usage as { completion_tokens_details?: unknown }).completion_tokens_details;
+    if (details && typeof details === "object") {
+      const reasoning = (details as { reasoning_tokens?: unknown }).reasoning_tokens;
+      if (typeof reasoning === "number" && reasoning > 0) return reasoning;
+    }
+  }
+  const choices = (data as { choices?: unknown }).choices;
+  const message = Array.isArray(choices) && choices[0] && typeof choices[0] === "object"
+    ? (choices[0] as { message?: unknown }).message
+    : undefined;
+  if (message && typeof message === "object") {
+    const reasoning = (message as { reasoning_content?: unknown }).reasoning_content;
+    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim().length;
+  }
+  return 0;
+}
 
 export function readChatContent(data: unknown): string {
   if (!data || typeof data !== "object") return "";
@@ -41,32 +96,25 @@ export class NebiusClient implements Llm {
 
   async complete(input: LlmRequest): Promise<string> {
     const url = `${this.options.baseUrl.replace(/\/$/, "")}/chat/completions`;
-    const signal = withTimeout(input.signal, this.options.timeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          model: input.model,
-          messages: [
-            { role: "system", content: input.system },
-            { role: "user", content: input.user },
-          ],
-          temperature: input.task === "write" ? 0.2 : 0.1,
-          max_tokens: input.maxTokens,
-          stream: false,
-        }),
-        signal,
-      });
-    } catch (error) {
-      if (isAbort(error)) throw error;
-      if (isTimeout(error)) throw new ProviderError("nebius", "timeout", "Nebius timed out before answering.");
-      throw new ProviderError("nebius", 0, "Nebius could not be reached.");
+    const budget = input.timeoutMs ?? this.options.timeoutMs;
+    const signal = withTimeout(input.signal, timeoutForTask(input.task, budget));
+    const body = buildChatCompletionBody({
+      model: input.model,
+      system: input.system,
+      user: input.user,
+      maxTokens: input.maxTokens,
+      temperature: input.task === "write" ? 0.2 : 0.1,
+    });
+    let response = await this.post(url, body, signal);
+    if (!response.ok && response.status === 400 && "chat_template_kwargs" in body) {
+      const detail = await safeBody(response);
+      if (/chat_template|thinking|extra/i.test(detail)) {
+        delete body.chat_template_kwargs;
+        response = await this.post(url, body, signal);
+      } else {
+        console.error(`nebius ${response.status} ${detail}`);
+        throw new ProviderError("nebius", response.status, nebiusErrorMessage(response.status));
+      }
     }
     if (!response.ok) {
       const detail = await safeBody(response);
@@ -80,7 +128,32 @@ export class NebiusClient implements Llm {
       throw new ProviderError("nebius", response.status, "Nebius returned a response that was not JSON.");
     }
     const text = readChatContent(data);
-    if (!text.trim()) throw new ProviderError("nebius", response.status, "Nebius returned an empty completion.");
+    if (!text.trim()) {
+      const reasoning = readReasoningTokens(data);
+      const message = reasoning > 0
+        ? "The model spent its token budget on reasoning and returned no answer."
+        : "Nebius returned an empty completion.";
+      throw new ProviderError("nebius", response.status, message);
+    }
     return text;
+  }
+
+  private async post(url: string, body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      if (isTimeout(error)) throw new ProviderError("nebius", "timeout", "Nebius timed out before answering.");
+      throw new ProviderError("nebius", 0, "Nebius could not be reached.");
+    }
   }
 }

@@ -135,4 +135,26 @@ describe("adjudicate", () => {
     expect(result.summary.verifier).toBe("local");
     expect(result.summary.note).toMatch(/second model did not finish/i);
   });
+
+  it("lists a repeated struck sentence once", () => {
+    const text = "The pilots have already cut pack cost by 40 percent.";
+    const draft = tagDraft({
+      headline: "One Hamburg car posted a 612 km highway range",
+      insufficient: false,
+      lede: [{ text, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Repeated", sentences: [{ text, kind: "fact", citations: ["p1"] }] }],
+      conflicts: [],
+      gaps: ["No price is reported.", "No price is reported.", "No  price is reported!"],
+    });
+    const result = adjudicate({
+      draft,
+      passages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+    });
+    expect(result.summary.droppedSentences.filter((sentence) => sentence.text === text)).toHaveLength(1);
+    expect(result.summary.dropped).toBe(1);
+    expect(result.gaps.filter((gap) => gap.toLowerCase().includes("price"))).toHaveLength(1);
+  });
 });

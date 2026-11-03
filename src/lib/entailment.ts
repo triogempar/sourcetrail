@@ -1,4 +1,4 @@
-import { contentWords, hasWord, numberTokens, properNouns } from "@/lib/text";
+import { contentWords, nameInText, numberTokens, properNouns } from "@/lib/text";
 
 export type SupportLevel = "supported" | "partial" | "unsupported";
 
@@ -25,17 +25,18 @@ export function assessSupport(sentence: string, passages: string[]): Support {
   if (missingNumber) {
     return { level: "unsupported", reason: `The figure ${missingNumber} is not in the cited passage.` };
   }
-  const missingName = properNouns(sentence).find((name) => !passages.some((passage) => hasWord(passage, name)));
-  if (missingName) {
-    return { level: "unsupported", reason: `${missingName} is not in the cited passage.` };
-  }
-  const words = contentWords(sentence);
+  const missingNames = properNouns(sentence).filter((name) => !passages.some((passage) => nameInText(name, passage)));
+  const words = contentWords(sentence).filter((word) => !missingNames.some((name) => name.toLowerCase().split(/\s+/).includes(word)));
   if (words.length === 0) {
     return { level: "unsupported", reason: "The sentence has no checkable wording." };
   }
   const passageWords = new Set(passages.flatMap((passage) => contentWords(passage)));
   const coverage = words.filter((word) => passageWords.has(word)).length / words.length;
-  if (hasNgram(words, passages, 4) || coverage >= 0.62) {
+  const grounded = hasNgram(words, passages, 4) || coverage >= 0.62;
+  if (missingNames.length > 0 && !hasNgram(words, passages, 4)) {
+    return { level: "unsupported", reason: `${missingNames[0]} is not in the cited passage.` };
+  }
+  if (grounded) {
     return { level: "supported", reason: "The cited passage supports the wording." };
   }
   if (coverage >= 0.38) {

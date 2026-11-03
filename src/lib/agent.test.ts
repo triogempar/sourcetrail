@@ -3,6 +3,7 @@ import { runResearch } from "@/lib/agent";
 import { EXAMPLES } from "@/lib/examples";
 import type { RuntimeConfig } from "@/lib/env";
 import { resolveModels } from "@/lib/env";
+import { ProviderError } from "@/lib/errors";
 import { createMockDeps } from "@/lib/mock/providers";
 import type { AgentDeps, Llm, ResearchEvent, SearchClient } from "@/lib/types";
 
@@ -146,6 +147,50 @@ describe("credit cap", () => {
     expect(searches).toBe(1);
     expect(result.credits).toBeLessThanOrEqual(2);
     expect(events.some((event) => event.type === "trail" && /credit cap/i.test(event.entry.detail ?? ""))).toBe(true);
+  });
+});
+
+describe("terminal search errors", () => {
+  it("does not buy a follow-up search after Tavily rejects the key", async () => {
+    let searches = 0;
+    const llm: Llm = {
+      async complete(input) {
+        if (input.task === "plan") {
+          return JSON.stringify({
+            language: "en",
+            recency: false,
+            topic: "general",
+            subquestions: [
+              { id: "sq1", question: "What did the first source report?", query: "first source report" },
+              { id: "sq2", question: "What did the second source report?", query: "second source report" },
+              { id: "sq3", question: "What did the third source report?", query: "third source report" },
+            ],
+          });
+        }
+        return "{\"query\":\"unused rewrite\"}";
+      },
+    };
+    const search: SearchClient = {
+      async search() {
+        searches += 1;
+        throw new ProviderError("tavily", 401, "Tavily rejected the API key.");
+      },
+      async extract() {
+        return { documents: [], failed: [] };
+      },
+    };
+    const deps: AgentDeps = {
+      mode: "live",
+      llm,
+      search,
+      models: fixtureConfig().models,
+      maxCredits: 8,
+      tokens: fixtureConfig().tokens,
+    };
+    const result = await runResearch("What did the sources report about the range?", deps, () => {});
+    expect(searches).toBe(3);
+    expect(result.brief).toBeNull();
+    expect(result.credits).toBe(3);
   });
 });
 

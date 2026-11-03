@@ -560,12 +560,14 @@ button, .text-button {
   right: 0;
   z-index: 2;
   height: 100vh;
-  width: min(440px, 100%);
+  width: min(440px, 100vw);
+  max-width: 100%;
   background: var(--paper);
   color: var(--ink);
   border-left: 1px solid var(--ink);
   padding: 1.1rem 1.15rem 2rem;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .sheet-top {
@@ -575,9 +577,22 @@ button, .text-button {
   align-items: flex-start;
   border-bottom: 1px solid var(--ink);
   padding-bottom: 0.7rem;
+  min-width: 0;
 }
 
-.sheet-top h2 { font-size: 1.7rem; margin: 0.2rem 0 0; }
+.sheet-top > div { min-width: 0; flex: 1 1 auto; }
+
+.sheet-top h2,
+.sheet .meta-line,
+.sheet .claim,
+.sheet .passage,
+.sheet .outlink {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.sheet-top h2 { font-size: 1.35rem; line-height: 1.25; margin: 0.2rem 0 0; }
 
 .meta-line {
   margin: 0.8rem 0 0;

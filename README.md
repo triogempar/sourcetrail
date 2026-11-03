@@ -38,7 +38,9 @@ No page is stored. There is no database. Closing the tab drops the brief, unless
 5. **Verify.** A different Nebius model reviews each sentence. A local entailment check then runs on the same passages: missing figures or names are unsupported even if the model approved them. Unsupported factual sentences are struck and listed. Partial matches stay, marked “Check”.
 6. **Honesty.** If sources assert incompatible claims, both sides are shown under “Sources disagree”. If the pages do not answer the question, the brief says so and lists what was searched. If every search fails, no brief is filed.
 
-Model output is parsed as JSON, validated, and repaired once. A second invalid reply stops that phase in the open. Nebius and Tavily errors and timeouts are written into the trail. The brief is emitted only after verification, so a dropped connection does not leave an unchecked draft on the page.
+Model output is parsed as JSON, validated, and repaired once. A truncated verifier reply is salvaged when it still contains finished verdicts. A second invalid reply stops that phase in the open. Nebius and Tavily errors and timeouts are written into the trail. The brief is emitted only after verification, so a dropped connection does not leave an unchecked draft on the page.
+
+DeepSeek V4 and other thinking-default Nebius models (Qwen3, QwQ) are called with `chat_template_kwargs: { thinking: false }`. Left on, DeepSeek V4.1 Flash spends the whole `max_tokens` budget on reasoning and returns an empty completion, which blows the write-step timeout after the search credits are already spent. A rejected template field is retried once without it. Auth, billing, and rate-limit errors from Tavily stop the inquiry before another search is purchased.
 
 ## Cost safety
 
@@ -60,7 +62,7 @@ What the code enforces on every request:
 | Plan `max_tokens` | 700 | 1,200 |
 | Rewrite `max_tokens` | 160 | 300 |
 | Write `max_tokens` | 1,600 | 2,500 |
-| Verify `max_tokens` | 900 | 1,500 |
+| Verify `max_tokens` | 1,600 | 2,400 |
 | Function `maxDuration` | 180 seconds | Hobby limit is 300 seconds |
 | Search rounds per line | 2 | 2 |
 | JSON repair attempts | 1 | 1 |
@@ -117,7 +119,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `NEBIUS_BASE_URL` | No | Default `https://api.tokenfactory.nebius.com/v1`. |
 | `NEBIUS_MODEL` | No | Drafting model. Default `deepseek-ai/DeepSeek-V4.1-Flash`. |
 | `NEBIUS_VERIFY_MODEL` | No | Second model. Default `Qwen/Qwen3-235B-A22B-Instruct-2507`. If it matches the drafter, the app switches to a different known id (`openai/gpt-oss-120b` or `zai-org/GLM-5.3`). |
-| `NEBIUS_TIMEOUT_MS` | No | Per completion. Default 25s, clamped between 5s and 40s. |
+| `NEBIUS_TIMEOUT_MS` | No | Budget for a Nebius call. Default 40s, clamped between 5s and 55s. Plan is capped at 30s and a rewrite at 20s so a slow run still fits the 180s Hobby function limit. |
 | `TAVILY_API_KEY` | Live mode | Bearer token for `https://api.tavily.com/search` and `/extract`. |
 | `TAVILY_SEARCH_TIMEOUT_MS` | No | Default 14s. |
 | `TAVILY_EXTRACT_TIMEOUT_MS` | No | Default 18s. |
@@ -131,7 +133,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SOURCETRAIL_MAX_TOKENS_PLAN` | No | Default 700. |
 | `SOURCETRAIL_MAX_TOKENS_REWRITE` | No | Default 160. |
 | `SOURCETRAIL_MAX_TOKENS_WRITE` | No | Default 1600. |
-| `SOURCETRAIL_MAX_TOKENS_VERIFY` | No | Default 900. |
+| `SOURCETRAIL_MAX_TOKENS_VERIFY` | No | Default 1,600. Verdicts are also checked in batches of 8, and each reason is limited to 8 words, so a long brief is not cut off mid-JSON. |
 
 Checks:
 
