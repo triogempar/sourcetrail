@@ -1,4 +1,5 @@
 import type { Passage } from "@/lib/types";
+import { isSlugPublisher } from "@/lib/text";
 
 type PromptSentence = {
   id: string;
@@ -43,7 +44,7 @@ export function writePrompt(input: {
   passages: Passage[];
 }): { system: string; user: string } {
   const passages = input.passages
-    .map((passage) => `[${passage.id}] ${passage.publisher} | ${passage.publishedDate ?? "undated"} | ${passage.title} | ${passage.url}\n"""${passage.text}"""`)
+    .map((passage) => `[${passage.id}] ${isSlugPublisher(passage.publisher) ? "unnamed site" : passage.publisher} | ${passage.publishedDate ?? "undated"} | ${passage.title} | ${passage.url}\n"""${passage.text}"""`)
     .join("\n\n");
   return {
     system: [
@@ -51,7 +52,7 @@ export function writePrompt(input: {
       `Write every user-facing string, including section headings, in the language of the question. Language: ${input.language}.`,
       "Stay compact: at most 6 sentences in the whole brief, each under 220 characters. Answer in lede first.",
       "kind fact is allowed only when the cited sources state it. Copy figures and names exactly. Every fact needs citation ids such as p1 in the citations array only. Never write (p1) or p1 inside the sentence.",
-      "Name the publisher in ordinary prose, using the name in the source header. Never paste a raw domain, a smashed host such as Nytimes or Lppm-stikesfa, a URL, or the word passage.",
+      "Name the publisher in ordinary prose, using the name in the source header. If the header says unnamed site, do not name that publisher at all. Never paste a raw domain, a smashed host such as Nytimes or Lppm-stikesfa, a URL, or the word passage.",
       "In conflicts, each side is one complete sentence that keeps every figure. Do not copy a lede or section sentence, and do not pair a public-opinion survey with betting odds.",
       "When you set conflicts, the headline must say the evidence is mixed, in the question language, rather than restating only one study.",
       "Do not inherit the source's first person. If a source says we, our, or I, attribute it, for example 'Harbor Desk called both figures highs for its poll.'",

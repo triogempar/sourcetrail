@@ -1,7 +1,7 @@
 import { appearsVerbatim, assessSupport, statesAbsence } from "@/lib/entailment";
 import { isSiteStat } from "@/lib/passages";
 import type { ModelVerdict } from "@/lib/schema";
-import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, subjectOverlap, uniqueGaps } from "@/lib/text";
+import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, isSlugPublisher, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, scrubSlugName, subjectOverlap, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -381,13 +381,35 @@ export function adjudicate(input: {
     ...ledeOut,
     ...sectionsOut.flatMap((section) => section.sentences),
   ].map((sentence) => sentence.text);
-  conflictsOut = conflictsOut.map((conflict) => ({
-    ...conflict,
-    sides: conflict.sides.map((side) => ({
-      ...side,
-      sentences: side.sentences.map((sentence) => ({ ...sentence, text: concisePosition(sentence.text, bodyText, side.label) })),
-    })),
-  }));
+  conflictsOut = conflictsOut
+    .map((conflict) => ({
+      ...conflict,
+      sides: conflict.sides.map((side) => ({
+        ...side,
+        sentences: side.sentences
+          .map((sentence) => {
+            const concise = concisePosition(sentence.text, bodyText, side.label);
+            const text = isFullSideSentence(concise, side.label) ? concise : sentence.text.replace(/\s+/g, " ").trim();
+            return { ...sentence, text };
+          })
+          .filter((sentence) => isFullSideSentence(sentence.text, side.label)),
+      })),
+    }))
+    .filter((conflict) => conflict.sides.length >= 2 && conflict.sides.every((side) => side.sentences.length > 0));
+
+  const slugNames = [...new Set(input.passages.map((passage) => passage.publisher.trim()).filter(isSlugPublisher))];
+  if (slugNames.length > 0) {
+    const scrub = (sentence: Sentence): Sentence => ({
+      ...sentence,
+      text: slugNames.reduce((text, name) => scrubSlugName(text, name, input.language ?? "en"), sentence.text),
+    });
+    ledeOut = ledeOut.map(scrub);
+    sectionsOut = sectionsOut.map((section) => ({ ...section, sentences: section.sentences.map(scrub) }));
+    conflictsOut = conflictsOut.map((conflict) => ({
+      ...conflict,
+      sides: conflict.sides.map((side) => ({ ...side, sentences: side.sentences.map(scrub) })),
+    }));
+  }
 
   const keptSentences = [
     ...ledeOut,
@@ -401,6 +423,7 @@ export function adjudicate(input: {
     input.language ?? "en",
     disputed,
     topicPhrase(input.question ?? "", conflictsOut),
+    [input.question ?? "", ...keptSentences.map((sentence) => sentence.text)].join(" "),
   );
   if (keptSentences.length === 0) {
     insufficient = true;
@@ -495,14 +518,29 @@ function topicPhrase(question: string, conflicts: { topic: string; sides: { sent
   return raw.replace(/^(?:apakah|berapa|bagaimana|mengapa|how many|how|what|does|do|is|are|did)\s+/i, "");
 }
 
-function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean, topic: string): string {
+function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean, topic: string, context = ""): string {
   if (!hasTwoSidedConflict || !topic || CONFLICT_HEADLINE.test(headline) || /beragam|mixed evidence|do not agree|tidak sepakat/i.test(headline)) return headline;
-  const phrase = `${topic.charAt(0).toUpperCase()}${topic.slice(1)}`;
+  const phrase = topicCase(topic, context);
   return /^id\b|indones/i.test(language) ? `Bukti beragam soal ${phrase}` : `Mixed evidence on ${phrase}`;
 }
 
 const OPINION_CLAIM = /\b(survey|poll|pew|adults|expected|voters|responden|survei|jajak|pendapat)\b/i;
 const MARKET_CLAIM = /\b(odds|kalshi|polymarket|betting|bettors|priced|contract|taruhan)\b/i;
+
+/** Lowercase the topic's first word after 'Mixed evidence on' unless it is a proper noun or acronym. */
+export function topicCase(topic: string, context = ""): string {
+  const first = topic.match(/^\S+/)?.[0] ?? "";
+  if (!first) return topic;
+  const word = first.replace(/[^\p{L}\p{N}'’-]/gu, "");
+  const acronym = /^[\p{Lu}\d]{2,}/u.test(word) || /\p{Ll}\p{Lu}/u.test(word) || /\d/.test(word);
+  const capitalizedMidSentence = word.length > 1 && new RegExp(`[\\p{L}\\p{N},;:]\\s+${escapeForRegExp(word.charAt(0).toUpperCase() + word.slice(1))}\\b`, "u").test(context);
+  if (acronym || capitalizedMidSentence) return topic;
+  return `${topic.charAt(0).toLowerCase()}${topic.slice(1)}`;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function claimKind(text: string): "opinion" | "market" | "other" {
   const opinion = OPINION_CLAIM.test(text);
@@ -647,6 +685,19 @@ function dropThinnerRestatements(sentences: Sentence[]): Sentence[] {
   return sentences.filter((sentence) => !drop.has(sentence.id));
 }
 
+/** A disagree-box side must read as a real sentence: about six words or more, not a label followed by bare figures. */
+export function isFullSideSentence(text: string, label = ""): boolean {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const words = cleaned.match(/\p{L}[\p{L}'’-]*/gu) ?? [];
+  if (words.length < 6) return false;
+  if (/^[^:]{1,60}:\s*[\d\s.,%]+(?:\s*(?:and|dan)\s*[\d\s.,%]+)*\.?$/i.test(cleaned)) return false;
+  if (label) {
+    const rest = cleaned.toLowerCase().startsWith(`${label.toLowerCase()}:`) ? cleaned.slice(label.length + 1) : null;
+    if (rest !== null && (rest.match(/\p{L}[\p{L}'’-]*/gu) ?? []).length < 6) return false;
+  }
+  return true;
+}
+
 function keepsEveryFigure(short: string, full: string): boolean {
   const have = new Set(numberTokens(short));
   return numberTokens(full).every((token) => have.has(token));
@@ -672,20 +723,9 @@ function concisePosition(text: string, body: string[], label = ""): string {
     if (keepsEveryFigure(picked.join(", and "), cleaned)) break;
   }
   const joined = picked.join(", and ").trim();
-  if (!joined || !keepsEveryFigure(joined, cleaned) || (label && !labelAgrees(label, joined)) || claimKey(joined) === claimKey(cleaned)) {
-    return compactRepeat(cleaned, label);
-  }
+  if (!joined || !keepsEveryFigure(joined, cleaned) || (label && !labelAgrees(label, joined))) return cleaned;
   const sentence = `${joined.charAt(0).toUpperCase()}${joined.slice(1)}`;
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
-}
-
-function compactRepeat(text: string, label: string): string {
-  const figures = [...new Set(text.match(/\d+(?:\.\d+)?%?/g) ?? [])];
-  if (label && figures.length > 0) {
-    const line = `${label}: ${figures.join(" and ")}.`;
-    if (claimKey(line) !== claimKey(text)) return line;
-  }
-  return text;
 }
 
 const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;

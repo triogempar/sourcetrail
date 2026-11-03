@@ -151,6 +151,12 @@ const SLUG_BRANDS: Record<string, string> = {
   medicalxpress: "Medical Xpress",
   sciencedirect: "ScienceDirect",
   mychess: "MyChess Events",
+  pewresearch: "Pew Research Center",
+  northjersey: "NorthJersey.com",
+};
+
+const HOST_BRANDS: Record<string, string> = {
+  "ms.now": "MS NOW",
 };
 
 export function naturalizeSentence(text: string): string {
@@ -168,6 +174,27 @@ export function naturalizeSentence(text: string): string {
     (host) => readablePublisher(host),
   );
   return next.replace(/\s{2,}/g, " ").trim();
+}
+
+/** A name smashed together from a host label, such as Northjersey or Pewresearch, that must not appear in prose. */
+export function isSlugPublisher(name: string): boolean {
+  const trimmed = name.trim();
+  if (!/^[A-Z][a-z0-9]{9,}$/.test(trimmed)) return false;
+  return !Object.values(SLUG_BRANDS).includes(trimmed) && !Object.values(HOST_BRANDS).includes(trimmed);
+}
+
+/** Remove a slug-looking publisher name from a prose sentence. */
+export function scrubSlugName(text: string, name: string, language = "en"): string {
+  if (!isSlugPublisher(name)) return text;
+  const slug = escapeRegExp(name);
+  let next = text
+    .replace(new RegExp(`^${slug}\\s+(?:reported|reports|said|says|notes|noted|wrote|writes|stated|states|found|finds|menyatakan|melaporkan|menyebut(?:kan)?|menulis|mencatat)\\s+(?:that\\s+|bahwa\\s+)?`, "i"), "")
+    .replace(new RegExp(`,?\\s*(?:according to|per|menurut)\\s+${slug}\\b,?`, "gi"), "")
+    .replace(new RegExp(`^(?:according to|per|menurut)\\s+${slug}\\b,?\\s*`, "i"), "");
+  const indonesian = /^id\b|indones/i.test(language);
+  next = next.replace(new RegExp(`\\b${slug}\\b`, "g"), indonesian ? "satu situs" : "one site");
+  next = next.replace(/\s{2,}/g, " ").trim();
+  return next ? `${next.charAt(0).toUpperCase()}${next.slice(1)}` : text;
 }
 
 export function loneAccountHeading(language: string): string {
@@ -237,7 +264,7 @@ export function nameInText(name: string, passage: string): boolean {
   return folded.length >= 8 && foldName(passage).includes(folded);
 }
 
-const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int", "tw", "events"]);
+const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int"]);
 
 function isWeakPublisher(name: string): boolean {
   const tokens = name.toLowerCase().split(/[\s.]+/).filter(Boolean);
@@ -333,6 +360,8 @@ function presentLabel(label: string): string {
 
 function brandFromHost(host: string): string | null {
   if (!host) return null;
+  const bare = host.replace(/^www\./, "");
+  if (HOST_BRANDS[bare]) return HOST_BRANDS[bare];
   const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label));
   if (labels[labels.length - 1] === "detik") {
     const section = (labels[labels.length - 2] ?? "").replace(/\d+$/g, "");
@@ -397,9 +426,7 @@ function fallbackBrand(raw: string): string | null {
     const known = knownBrand(label);
     if (known) return known;
   }
-  const generic = new Set(["events", "tw", "www", "mail", "mobile", "blog", "cdn", "static", "media", "online", "web", "site", "app", "amp", "edition", "en"]);
-  const specific = labels.filter((label) => !generic.has(label) && label.length > 2);
-  const core = specific.sort((a, b) => b.length - a.length)[0] ?? labels.find((label) => label.length > 2) ?? "";
+  const core = labels[labels.length - 1] ?? "";
   if (core.length < 2) return null;
   return presentLabel(core);
 }

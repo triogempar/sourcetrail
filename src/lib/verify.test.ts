@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Passage } from "@/lib/types";
-import { adjudicate, tagDraft } from "@/lib/verify";
+import { adjudicate, isFullSideSentence, tagDraft, topicCase } from "@/lib/verify";
 
 const passages: Passage[] = [
   {
@@ -1030,7 +1030,7 @@ describe("adjudicate", () => {
     const side = result.conflicts.flatMap((conflict) => conflict.sides).find((item) => item.label === "Finds little difference");
     expect(side?.sentences[0]?.text).toMatch(/little difference/i);
     expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
-    expect(result.headline).toBe("Bukti beragam soal Weight loss");
+    expect(result.headline).toBe("Bukti beragam soal weight loss");
   });
 
   it("keeps a 9-point edge that is stated in the page title", () => {
@@ -1149,5 +1149,117 @@ describe("adjudicate", () => {
     expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/between 7 and 11 points/);
     expect(result.headline).not.toMatch(/mixed evidence/i);
     expect(result.headline.charAt(0)).toBe(result.headline.charAt(0).toUpperCase());
+  });
+
+  it("rejects the number-only disagree sides from round 12", () => {
+    expect(isFullSideSentence("Fasting edge: 2025 and 4 and 3 and 12.", "Fasting edge")).toBe(false);
+    expect(isFullSideSentence("Little difference: 2025.", "Little difference")).toBe(false);
+    expect(isFullSideSentence("Meningkatkan risiko: 2.", "Meningkatkan risiko")).toBe(false);
+    expect(isFullSideSentence("Repository UNDIP menyatakan subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi.", "Meningkatkan risiko")).toBe(true);
+  });
+
+  const fastingPages: Passage[] = [{
+    id: "p1",
+    url: "https://medium.com/fasting",
+    title: "Fasting trial",
+    publisher: "Medium",
+    publishedDate: null,
+    origin: "extract",
+    text: "A 2025 Annals of Internal Medicine trial found 4:3 intermittent fasting produced just under 3 kg more weight loss than daily restriction over 12 months.",
+  }, {
+    id: "p2",
+    url: "https://www.cuanschutz.edu/news",
+    title: "Little difference",
+    publisher: "CU Anschutz",
+    publishedDate: null,
+    origin: "extract",
+    text: "A 2025 review found little difference in weight loss between intermittent fasting and daily calorie restriction over 12 months.",
+  }];
+  const fastingEdge = "A 2025 Annals of Internal Medicine trial found 4:3 intermittent fasting produced just under 3 kg more weight loss than daily restriction over 12 months.";
+  const littleDifference = "A 2025 review found little difference in weight loss between intermittent fasting and daily calorie restriction over 12 months.";
+
+  it("keeps full original sentences on both disagree sides even when they repeat the body", () => {
+    const draft = tagDraft({
+      headline: "Mixed evidence on whether intermittent fasting outperforms daily calorie restriction",
+      insufficient: false,
+      lede: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Reviews", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Whether intermittent fasting outperforms daily calorie restriction for long-term weight loss",
+        sides: [
+          { label: "Fasting edge", sentences: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }] },
+          { label: "Little difference", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: fastingPages, modelVerdicts: null, mode: "live", modelError: null, question: "Is intermittent fasting more effective than daily calorie restriction for long-term weight loss?" });
+    expect(result.conflicts).toHaveLength(1);
+    const texts = result.conflicts[0]!.sides.map((side) => side.sentences.map((sentence) => sentence.text).join(" "));
+    expect(texts).not.toContain("Fasting edge: 2025 and 4 and 3 and 12.");
+    expect(texts).not.toContain("Little difference: 2025.");
+    for (const text of texts) expect(isFullSideSentence(text)).toBe(true);
+    expect(texts[0]).toMatch(/Annals of Internal Medicine/);
+    expect(texts[1]).toMatch(/little difference/);
+  });
+
+  it("drops the disagree box when a side is only a label and a figure", () => {
+    const draft = tagDraft({
+      headline: "Mixed evidence on whether intermittent fasting outperforms daily calorie restriction",
+      insufficient: false,
+      lede: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Reviews", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Whether intermittent fasting outperforms daily calorie restriction",
+        sides: [
+          { label: "Fasting edge", sentences: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }] },
+          { label: "Little difference", sentences: [{ text: "Little difference: 2025.", kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: fastingPages, modelVerdicts: null, mode: "live", modelError: null, question: "Is intermittent fasting more effective than daily calorie restriction for long-term weight loss?" });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.headline).not.toMatch(/mixed evidence/i);
+  });
+
+  it("drops a number-only line but keeps the full sentence on the same side", () => {
+    const undip = "Repository UNDIP menyatakan subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi 4,11 kali lebih tinggi dibandingkan subjek yang tidak minum kopi.";
+    const halodoc = "Halodoc menyatakan konsumsi kopi harian tidak mungkin memiliki dampak signifikan pada tekanan darah orang dengan tekanan darah tinggi.";
+    const pages: Passage[] = [{
+      id: "p1", url: "https://eprints.undip.ac.id/kopi", title: "Kopi dan hipertensi", publisher: "Repository UNDIP", publishedDate: null, origin: "extract",
+      text: "Subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi 4,11 kali lebih tinggi dibandingkan subjek yang tidak minum kopi.",
+    }, {
+      id: "p2", url: "https://www.halodoc.com/kopi", title: "Kopi", publisher: "Halodoc", publishedDate: null, origin: "extract",
+      text: "Konsumsi kopi harian tidak mungkin memiliki dampak signifikan pada tekanan darah orang dengan tekanan darah tinggi.",
+    }];
+    const draft = tagDraft({
+      headline: "Kopi dan tekanan darah",
+      insufficient: false,
+      lede: [{ text: halodoc, kind: "fact", citations: ["p2"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko hipertensi dari kebiasaan minum kopi harian",
+        sides: [
+          { label: "Tidak meningkatkan risiko", sentences: [{ text: halodoc, kind: "fact", citations: ["p2"] }] },
+          { label: "Meningkatkan risiko", sentences: [{ text: "Meningkatkan risiko: 2.", kind: "fact", citations: ["p1"] }, { text: undip, kind: "fact", citations: ["p1"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: pages, modelVerdicts: null, mode: "live", modelError: null, language: "id", question: "Apakah minum kopi setiap hari meningkatkan risiko darah tinggi?" });
+    const side = result.conflicts[0]?.sides.find((item) => item.label === "Meningkatkan risiko");
+    expect(side?.sentences.map((sentence) => sentence.text)).not.toContain("Meningkatkan risiko: 2.");
+    expect(side?.sentences[0]?.text).toMatch(/Repository UNDIP/);
+    expect(result.headline).toBe("Bukti beragam soal risiko hipertensi dari kebiasaan minum kopi harian");
+  });
+
+  it("lowercases the topic after the mixed-evidence prefix unless it is a proper noun", () => {
+    expect(`Mixed evidence on ${topicCase("Whether intermittent fasting outperforms daily calorie restriction for long-term weight loss")}`)
+      .toBe("Mixed evidence on whether intermittent fasting outperforms daily calorie restriction for long-term weight loss");
+    expect(`Bukti beragam soal ${topicCase("Risiko hipertensi dari kebiasaan minum kopi harian")}`)
+      .toBe("Bukti beragam soal risiko hipertensi dari kebiasaan minum kopi harian");
+    expect(topicCase("NYT and NBC lead estimates")).toBe("NYT and NBC lead estimates");
+    expect(topicCase("Democratic lead size", "Polls show a Democratic lead.")).toBe("Democratic lead size");
   });
 });

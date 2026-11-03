@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessSupport } from "@/lib/entailment";
-import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, offTopicReason, planFrameDetail, readablePublisher } from "@/lib/text";
+import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, isSlugPublisher, offTopicReason, planFrameDetail, readablePublisher, scrubSlugName } from "@/lib/text";
 
 const PASSAGE = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h, measured by the city's technical university on 28 October 2026.";
 
@@ -111,7 +111,17 @@ describe("assessSupport", () => {
     expect(readablePublisher("medicalxpress.com")).toBe("Medical Xpress");
     expect(readablePublisher("sciencedirect.com")).toBe("ScienceDirect");
     expect(readablePublisher("mychess.events")).toBe("MyChess Events");
-    expect(readablePublisher("example.tw")).toBe("Example");
+    expect(readablePublisher("Tavily", "House poll", "https://www.pewresearch.org/politics/2026/house")).toBe("Pew Research Center");
+    expect(readablePublisher("Northjersey")).toBe("NorthJersey.com");
+    expect(readablePublisher("Pewresearch")).toBe("Pew Research Center");
+    expect(readablePublisher("Tavily", "Midterms", "https://www.northjersey.com/story/news/2026")).toBe("NorthJersey.com");
+    expect(readablePublisher("Tavily", "Midterm odds", "https://www.ms.now/news/midterms")).toBe("MS NOW");
+    expect(naturalizeSentence("Northjersey reported Democrats lead by 7 points.")).toBe("NorthJersey.com reported Democrats lead by 7 points.");
+    expect(isSlugPublisher("Northjersey")).toBe(true);
+    expect(isSlugPublisher("Examplenews")).toBe(true);
+    expect(isSlugPublisher("Medium")).toBe(false);
+    expect(scrubSlugName("Examplenews reported Democrats lead by 7 points.", "Examplenews")).toBe("Democrats lead by 7 points.");
+    expect(scrubSlugName("Democrats lead by 7 points, according to Examplenews.", "Examplenews")).toBe("Democrats lead by 7 points.");
     expect(planFrameDetail("id", 4)).toBe("4 jalur pertanyaan. Bahasa: id.");
   });
 
