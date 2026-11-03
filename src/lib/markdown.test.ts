@@ -99,4 +99,13 @@ describe("ndjson and stream state", () => {
     expect(done.trail).toHaveLength(1);
     expect(done.trail[0]?.status).toBe("ok");
   });
+
+  it("loads an older brief whose aside lines are plain strings", () => {
+    const loaded = reduceStream(emptyStream(), {
+      type: "brief",
+      brief: { ...brief, aside: ["A side note from an older run."] as unknown as Brief["aside"] },
+    });
+    expect(loaded.brief?.aside[0]?.text).toBe("A side note from an older run.");
+    expect(loaded.brief?.aside[0]?.citations).toEqual([]);
+  });
 });

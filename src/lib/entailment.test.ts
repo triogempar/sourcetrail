@@ -79,10 +79,43 @@ describe("assessSupport", () => {
     expect(readablePublisher("health.detik.com")).toBe("detikHealth");
     expect(readablePublisher("Health detik")).toBe("detikHealth");
     expect(readablePublisher("prin.or.id", "Konsumsi kopi harian | Jurnal Kedokteran Komunitas")).toBe("Jurnal Kedokteran Komunitas");
-    expect(readablePublisher("withpower.com")).toBe("Withpower");
-    expect(readablePublisher("Power", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", "https://www.withpower.com/study")).toBe("Withpower");
-    expect(readablePublisher("stikesfa.ac.id", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...")).toBe("Stikesfa");
-    expect(readablePublisher("Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", undefined, "https://ejournal.stikesfa.ac.id/index.php/kopi")).toBe("Stikesfa");
+    expect(readablePublisher("withpower.com")).toBe("WithPower");
+    expect(readablePublisher("Power", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", "https://www.withpower.com/study")).toBe("WithPower");
+    expect(readablePublisher("nytimes.com")).toBe("New York Times");
+    expect(readablePublisher("livenowfox.com")).toBe("Fox");
+    expect(readablePublisher("cuanschutz.edu")).toBe("CU Anschutz");
+    expect(readablePublisher("www.frontiersin.org")).toBe("Frontiers");
+    expect(readablePublisher("stikesfa.ac.id", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...")).toBe("LPPM Stikesfa");
+    expect(readablePublisher("Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", undefined, "https://ejournal.stikesfa.ac.id/index.php/kopi")).toBe("LPPM Stikesfa");
+    expect(naturalizeSentence("Jurnal Lppm-stikesfa juga mencatat risiko yang sama.")).toContain("LPPM Stikesfa");
+  });
+
+  it("keeps a missing-evidence sentence that names a place the passage lacks", () => {
+    const result = assessSupport(
+      "None of the stored sources gives an attendance figure for the chess club at the Braga public library.",
+      ["The club meets on Thursdays at the branch."],
+    );
+    expect(result.level).toBe("supported");
+    expect(result.reason).not.toMatch(/Braga/);
+  });
+
+  it("reads Massillon Public Library from a facebook slug", () => {
+    expect(nameInText("Massillon Public Library", "https://www.facebook.com/massillonlibrary/posts/9")).toBe(true);
+    const result = assessSupport(
+      "The Facebook post from Massillon Public Library said the club meets on Thursdays.",
+      ["The club meets on Thursdays at the branch."],
+      "https://www.facebook.com/massillonlibrary/posts/9 Facebook",
+    );
+    expect(result.reason).not.toMatch(/Massillon/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("accepts a sentence copied from the passage", () => {
+    const result = assessSupport(
+      "Kalshi showed 61 percent favoring a Republican Senate win.",
+      ["Kalshi showed 61% favoring a Republican Senate win."],
+    );
+    expect(result.level).toBe("supported");
   });
 
   it("accepts a publisher name that lives in the title or URL", () => {

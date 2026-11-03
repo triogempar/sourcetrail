@@ -1,4 +1,4 @@
-import { assessSupport } from "@/lib/entailment";
+import { appearsVerbatim, assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
 import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, subjectOverlap, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
@@ -127,15 +127,17 @@ function judgeSentence(
     );
   }
   const support = assessSupport(sentence.text, cited, sourceMetadata(passages));
+  const verbatim = appearsVerbatim(sentence.text, cited);
   const localOff = question ? offTopicReason(question, sentence.text) : null;
   const modelOff = verdicts.get(sentence.id)?.relevant === false;
   const onSubject = question
     ? subjectOverlap(question, sentence.text) >= 2 || subjectOverlap(question, cited.join("\n")) >= 2
     : false;
   const offTopic = Boolean(localOff) || (modelOff && !onSubject);
-  if (offTopic && (support.level !== "unsupported" || model === "supported")) {
+  if (offTopic && (support.level !== "unsupported" || model === "supported" || verbatim)) {
     return { action: "aside", reason: localOff ?? "The sentence does not answer this question's place or subject." };
   }
+  if (verbatim) return { action: "keep", reason: "The sentence appears in the cited passage." };
   if (support.level === "unsupported") return soften(support.reason, model);
   if (support.level === "partial") {
     if (model === "unsupported") {
@@ -168,19 +170,32 @@ export function verificationNote(input: {
   modelUsed: boolean;
   modelError: string | null;
   droppedOverride: boolean;
+  language?: string;
 }): string {
+  const indonesian = /^id\b|indones/i.test(input.language ?? "");
   if (input.mode === "mock") {
+    if (indonesian) {
+      return input.droppedOverride
+        ? "Mode contoh tidak memanggil Nebius. Setiap kalimat dicocokkan dengan kutipannya. Pemeriksa simulasi menandai kalimat yang dicoret sebagai didukung, dan pemeriksaan kutipan mengalahkannya."
+        : "Mode contoh tidak memanggil Nebius. Setiap kalimat dicocokkan dengan kutipannya.";
+    }
     return input.droppedOverride
       ? "Mock mode did not call Nebius. Local entailment checked every sentence against its passage. A simulated verifier marked a struck sentence as supported; the passage check overrode it."
       : "Mock mode did not call Nebius. Local entailment checked every sentence against its passage.";
   }
   if (input.modelError) {
-    return `The second model did not finish (${input.modelError}). Local entailment still checked every sentence. Nothing was published without that check.`;
+    return indonesian
+      ? `Model kedua tidak selesai (${input.modelError}). Pemeriksaan kutipan tetap dijalankan. Tidak ada kalimat yang terbit tanpa pemeriksaan itu.`
+      : `The second model did not finish (${input.modelError}). Local entailment still checked every sentence. Nothing was published without that check.`;
   }
   if (!input.modelUsed) {
-    return "Local entailment checked every sentence against its passage.";
+    return indonesian
+      ? "Setiap kalimat dicocokkan dengan kutipannya."
+      : "Local entailment checked every sentence against its passage.";
   }
-  return "A second Nebius model reviewed the citations. A sentence it marked supported stays, with a check when the local heuristic dissented.";
+  return indonesian
+    ? "Model kedua di Nebius meninjau kutipan. Kalimat yang dinilai didukung tetap ada, dengan tanda periksa bila pemeriksaan lokal berbeda."
+    : "A second Nebius model reviewed the citations. A sentence it marked supported stays, with a check when the local heuristic dissented.";
 }
 
 export function adjudicate(input: {
@@ -303,9 +318,14 @@ export function adjudicate(input: {
     ...sentence,
     citations: sentence.citations.filter((id) => known.has(id)),
   });
-  const ledeOut = lede.map(strip);
-  const sectionsOut = sections.map((section) => ({ ...section, sentences: section.sentences.map(strip) }));
-  const conflictsOut = conflicts.map((conflict) => ({
+  const ledeOut = dropThinnerRestatements(lede.map(strip));
+  const sectionsOut = sections.map((section) => ({
+    ...section,
+    sentences: dropThinnerRestatements(section.sentences.map(strip)).filter(
+      (sentence) => !ledeOut.some((kept) => isThinnerRestatement(sentence.text, kept.text)),
+    ),
+  }));
+  let conflictsOut = conflicts.map((conflict) => ({
     ...conflict,
     sides: conflict.sides.map((side) => ({ ...side, sentences: side.sentences.map(strip) })),
   }));
@@ -316,6 +336,17 @@ export function adjudicate(input: {
       conflictsOut.push(conflict);
     }
   }
+  const bodyText = [
+    ...ledeOut,
+    ...sectionsOut.flatMap((section) => section.sentences),
+  ].map((sentence) => sentence.text);
+  conflictsOut = conflictsOut.map((conflict) => ({
+    ...conflict,
+    sides: conflict.sides.map((side) => ({
+      ...side,
+      sentences: side.sentences.map((sentence) => ({ ...sentence, text: concisePosition(sentence.text, bodyText) })),
+    })),
+  }));
 
   const keptSentences = [
     ...ledeOut,
@@ -329,13 +360,16 @@ export function adjudicate(input: {
     gaps.splice(0, gaps.length, ...gaps.filter((gap) => !/passage check|factual sentence remained/i.test(gap)));
     if (input.passages.length > 0) {
       const indonesian = /^id\b|indones/i.test(input.language ?? "");
-      headline = indonesian ? "Sumber yang ada tidak menjawab ini" : "The searched pages do not answer this";
+      const removed = [...dropped.map((item) => item.text), ...aside.map((item) => item.text)];
+      if (headlineFollowsRemoved(headline, removed) || headline.trim().length < 8) {
+        headline = gapHeadline(input.question ?? "", input.language ?? "en");
+      }
       const nearest = nearestFinding(input.question ?? "", input.passages, input.language ?? "en");
       if (nearest) ledeOut.push(nearest);
       const gap = indonesian
-        ? "Sumber yang tersimpan tidak mencakup jawaban langsung. Kalimat di atas hanya menunjuk halaman terdekat."
-        : "The stored pages do not directly answer the question. The sentence above only points to the nearest page.";
-      if (!gaps.some((item) => /halaman terdekat|nearest page/i.test(item))) gaps.push(gap);
+        ? "Halaman yang tersimpan tidak memuat jawaban untuk pertanyaan ini."
+        : "The stored pages do not contain an answer to this question.";
+      if (!gaps.some((item) => /tidak memuat jawaban|do not contain an answer/i.test(item))) gaps.push(gap);
     }
   }
 
@@ -361,6 +395,7 @@ export function adjudicate(input: {
         modelUsed,
         modelError: input.modelError,
         droppedOverride,
+        language: input.language,
       }),
     },
   };
@@ -373,6 +408,32 @@ function softenConflictHeadline(headline: string, language: string, hasTwoSidedC
   return /^id\b|indones/i.test(language)
     ? "Sumber yang ada tidak menetapkan satu jawaban"
     : "The stored pages do not settle one answer";
+}
+
+function headlineFollowsRemoved(headline: string, removed: string[]): boolean {
+  const numbers = new Set(removed.flatMap((text) => numberTokens(text)));
+  if (numberTokens(headline).some((token) => numbers.has(token))) return true;
+  return removed.some((text) => similarWording(headline, text));
+}
+
+function similarWording(left: string, right: string): boolean {
+  const a = new Set(contentWords(left));
+  const b = new Set(contentWords(right));
+  if (a.size === 0 || b.size === 0) return false;
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared += 1;
+  return shared / Math.min(a.size, b.size) >= 0.6;
+}
+
+function gapHeadline(question: string, language: string): string {
+  const q = question.replace(/\s+/g, " ").trim().replace(/[?？]+$/g, "");
+  const indonesian = /^id\b|indones/i.test(language);
+  if (!q) return indonesian ? "Sumber yang ada tidak menjawab ini" : "The searched pages do not answer this";
+  if (indonesian && /^berapa\b/i.test(q)) return `Tidak ada sumber yang menyebut ${q.replace(/^berapa\s+/i, "")}`;
+  if (indonesian && /^apakah\b/i.test(q)) return `Sumber yang ada tidak menetapkan apakah ${q.replace(/^apakah\s+/i, "")}`;
+  if (indonesian) return `Sumber yang ada tidak menjawab ${q.charAt(0).toLowerCase()}${q.slice(1)}`;
+  if (/^how many\b/i.test(q)) return `No stored source states how many ${q.replace(/^how many\s+/i, "")}`;
+  return `The stored pages do not answer ${q.charAt(0).toLowerCase()}${q.slice(1)}`;
 }
 
 function nearestFinding(question: string, passages: Passage[], language: string): Sentence | null {
@@ -388,12 +449,61 @@ function nearestFinding(question: string, passages: Passage[], language: string)
     }
   }
   const indonesian = /^id\b|indones/i.test(language);
-  const name = best.publisher.trim() || (indonesian ? "Sumber" : "The stored page");
-  const about = clip(best.title.trim() || (indonesian ? "halaman tersimpan" : "a stored page"), 72);
+  const name = best.publisher.trim() || (indonesian ? "sumber tersimpan" : "the stored page");
+  const title = best.title.trim();
+  const usableTitle = title && title.length <= 48 && !/[…\u2026]|\.{3}/.test(title) && !/^(pengaruh|the effect|the impact)\b/i.test(title);
   const text = indonesian
-    ? `${name} membahas “${about}”, dan halaman itu tidak menjawab pertanyaan secara langsung.`
-    : `${name} discusses “${about},” and that page does not directly answer the question.`;
+    ? (usableTitle ? `Yang paling dekat adalah tulisan ${name} berjudul ${title}.` : `Yang paling dekat berasal dari ${name}.`)
+    : (usableTitle ? `The nearest page is from ${name}, titled ${title}.` : `The nearest page is from ${name}.`);
   return { id: `near-${best.id}`, text, kind: "fact", citations: [best.id], flag: "partial" };
+}
+
+function figureValues(text: string): number[] {
+  return numberTokens(text).map((token) => Number(token.replace("%", ""))).filter((value) => Number.isFinite(value));
+}
+
+function isThinnerRestatement(thinner: string, fuller: string): boolean {
+  const small = figureValues(thinner);
+  const full = figureValues(fuller);
+  if (small.length === 0 || small.length > 2 || full.length < 2) return false;
+  if (properNouns(thinner).some((name) => !nameInText(name, fuller))) return false;
+  const diffs: number[] = [];
+  for (let i = 0; i < full.length; i += 1) {
+    for (let j = i + 1; j < full.length; j += 1) diffs.push(Math.abs(full[i]! - full[j]!));
+  }
+  const explained = small.every((value) => diffs.some((diff) => Math.abs(diff - value) < 0.051) || full.some((item) => Math.abs(item - value) < 0.051));
+  const derived = small.some((value) => diffs.some((diff) => Math.abs(diff - value) < 0.051));
+  return explained && derived;
+}
+
+function dropThinnerRestatements(sentences: Sentence[]): Sentence[] {
+  const drop = new Set<string>();
+  for (let i = 0; i < sentences.length; i += 1) {
+    for (let j = i + 1; j < sentences.length; j += 1) {
+      const left = sentences[i]!;
+      const right = sentences[j]!;
+      if (isThinnerRestatement(left.text, right.text)) drop.add(left.id);
+      if (isThinnerRestatement(right.text, left.text)) drop.add(right.id);
+    }
+  }
+  return sentences.filter((sentence) => !drop.has(sentence.id));
+}
+
+function concisePosition(text: string, body: string[]): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const words = cleaned.split(" ");
+  const repeats = body.some((item) => similarWording(cleaned, item) || claimKey(cleaned) === claimKey(item));
+  if (words.length <= 18 && !repeats) return cleaned;
+  if (words.length <= 12) return cleaned;
+  const pieces = cleaned.split(/,\s+(?:and|but|while|whereas|dan|tetapi|namun|sedangkan)\s+/i);
+  let chosen = (pieces[pieces.length - 1] ?? cleaned).replace(/^(?:that|the claim that)\s+/i, "");
+  let chosenWords = chosen.split(/\s+/);
+  if (chosenWords.length < 6 || chosenWords.length > 18) {
+    chosen = words.slice(-16).join(" ");
+    chosenWords = chosen.split(/\s+/);
+  }
+  chosen = `${chosen.charAt(0).toUpperCase()}${chosen.slice(1)}`;
+  return /[.!?]$/.test(chosen) ? chosen : `${chosen.replace(/[,:;]$/, "")}.`;
 }
 
 const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;

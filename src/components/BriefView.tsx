@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { briefToMarkdown, citationOrder, footnoteNumber } from "@/lib/markdown";
 import { briefLabels, formatDate } from "@/lib/text";
-import type { InquiryOutcome } from "@/lib/stream-state";
+import { coerceSentences, type InquiryOutcome } from "@/lib/stream-state";
 import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
 
 export function BriefView({
@@ -44,6 +44,7 @@ export function BriefView({
   }
 
   const labels = briefLabels(brief.language);
+  const aside = coerceSentences(brief.aside);
   const gaps = (
     <section className="gaps" aria-label={labels.unanswered}>
       <h2>{labels.unanswered}</h2>
@@ -72,9 +73,9 @@ export function BriefView({
           <h1>{brief.headline}</h1>
           <p className="asked">{brief.question}</p>
           <p className="dateline">
-            <span>{brief.passages.length} passages</span>
-            <span>{summary ? `${summary.checked} claims checked` : "Unchecked"}</span>
-            <span>{brief.models.mode === "mock" ? "Fixture desk" : brief.models.primary}</span>
+            <span>{labels.passages(brief.passages.length)}</span>
+            <span>{summary ? labels.checked(summary.checked) : labels.unchecked}</span>
+            <span>{brief.models.mode === "mock" ? labels.fixture : brief.models.primary}</span>
           </p>
         </div>
         <div className="export">
@@ -143,11 +144,11 @@ export function BriefView({
           ))}
         </section>
       ) : null}
-      {brief.aside.length > 0 ? (
+      {aside.length > 0 ? (
         <section className="instead" aria-label={labels.instead}>
           <h2>{labels.instead}</h2>
           <ul>
-            {brief.aside.map((sentence) => (
+            {aside.map((sentence) => (
               <li key={sentence.id}>
                 <SentenceText
                   sentence={sentence}
@@ -185,7 +186,7 @@ export function BriefView({
                 <li key={passage.id}>
                   <button type="button" onClick={() => onCite(passage.id, brief.lede[0]?.text || passage.text)}>
                     {number > 0 ? `${number}. ` : `${labels.unread}. `}
-                    {passage.publisher}. {passage.title}. {formatDate(passage.publishedDate)}
+                    {passage.publisher}. {passage.title}. {formatDate(passage.publishedDate, brief.language)}
                   </button>
                 </li>
               );

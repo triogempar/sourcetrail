@@ -1,4 +1,4 @@
-import { contentWords, nameInText, numberSatisfied, numberTokens, properNouns, stripWebAddresses } from "@/lib/text";
+import { contentWords, nameInText, numberSatisfied, numberTokens, properNouns, stripCitationTags, stripWebAddresses } from "@/lib/text";
 
 export type SupportLevel = "supported" | "partial" | "unsupported";
 
@@ -23,20 +23,47 @@ function overstatesScope(sentence: string, passages: string[]): boolean {
   return passages.some((passage) => DOSE_SCOPE.test(passage));
 }
 
+const ABSENCE = /\b(?:none of (?:the |these )?(?:stored |retrieved )?(?:sources|pages)|no (?:stored |retrieved )?(?:source|page) (?:gives|reports|states|provides|mentions)|tidak ada (?:sumber|halaman|kutipan)|(?:tidak|belum) (?:ada|ditemukan|dilaporkan) (?:angka|data|laporan|sumber))\b/i;
+
+function foldMatch(text: string): string {
+  return stripWebAddresses(stripCitationTags(text))
+    .toLowerCase()
+    .replace(/(\d+(?:\.\d+)?)\s*(?:percent|persen|per cent)/g, "$1%")
+    .replace(/[^\p{L}\p{N}%]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function appearsVerbatim(sentence: string, passages: string[]): boolean {
+  const needle = foldMatch(sentence);
+  if (needle.length < 24) return false;
+  return passages.some((passage) => foldMatch(passage).includes(needle));
+}
+
+function statesAbsence(sentence: string): boolean {
+  return ABSENCE.test(sentence);
+}
+
 export function assessSupport(sentence: string, passages: string[], metadata = ""): Support {
   if (passages.length === 0) {
     return { level: "unsupported", reason: "No cited passage was stored." };
   }
   const cleanSentence = stripWebAddresses(sentence);
   const cleanPassages = passages.map((passage) => stripWebAddresses(passage));
-  const meta = stripWebAddresses(metadata);
+  if (appearsVerbatim(sentence, passages)) {
+    return { level: "supported", reason: "The sentence appears in the cited passage." };
+  }
   const haystack = cleanPassages.join("\n");
   const missingNumber = numberTokens(cleanSentence).find((token) => !numberSatisfied(token, haystack));
+  if (statesAbsence(cleanSentence)) {
+    if (missingNumber) return { level: "unsupported", reason: `The figure ${missingNumber} is not in the cited passage.` };
+    return { level: "supported", reason: "The sentence reports a gap rather than a new fact." };
+  }
   if (missingNumber) {
     return { level: "unsupported", reason: `The figure ${missingNumber} is not in the cited passage.` };
   }
   const inPassage = (name: string) => cleanPassages.some((passage) => nameInText(name, passage));
-  const inMetadata = (name: string) => Boolean(meta) && nameInText(name, meta);
+  const inMetadata = (name: string) => Boolean(metadata) && nameInText(name, metadata);
   const names = properNouns(cleanSentence);
   const missingNames = names.filter((name) => !inPassage(name) && !inMetadata(name));
   const attributed = names.filter((name) => inMetadata(name) && !inPassage(name));

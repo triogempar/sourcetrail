@@ -1,3 +1,4 @@
+import { coerceSentences } from "@/lib/stream-state";
 import { briefLabels, formatDate } from "@/lib/text";
 import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
 
@@ -11,7 +12,7 @@ export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflict
   brief.lede.forEach(push);
   brief.sections.forEach((section) => section.sentences.forEach(push));
   brief.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(push)));
-  brief.aside.forEach(push);
+  coerceSentences(brief.aside).forEach(push);
   return order;
 }
 
@@ -68,7 +69,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
   }
   if (brief.aside.length > 0) {
     lines.push(`## ${labels.instead}`, "");
-    brief.aside.forEach((item) => lines.push(`- ${sentence(item)}`));
+    coerceSentences(brief.aside).forEach((item) => lines.push(`- ${sentence(item)}`));
     lines.push("");
   }
   if (!brief.insufficient && brief.gaps.length > 0) {
@@ -105,7 +106,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
       const passage = brief.passages.find((item) => item.id === id);
       if (!passage) return;
       lines.push(
-        `[^${index + 1}]: ${passage.publisher}. "${passage.title}." ${formatDate(passage.publishedDate)}. ${passage.url}`,
+        `[^${index + 1}]: ${passage.publisher}. "${passage.title}." ${formatDate(passage.publishedDate, brief.language)}. ${passage.url}`,
         "",
         `> ${passage.text}`,
         "",

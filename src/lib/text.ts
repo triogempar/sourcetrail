@@ -81,7 +81,7 @@ const NUMBER_WORDS: Record<string, string[]> = {
   "12": ["twelve", "dua belas"],
 };
 
-function stripCitationTags(text: string): string {
+export function stripCitationTags(text: string): string {
   return text.replace(/\s*[([]\s*p\s*\d+(?:\s*[,;]\s*p\s*\d+)*\s*[)\]]/gi, "");
 }
 
@@ -126,15 +126,32 @@ export function numberSatisfied(token: string, passage: string): boolean {
   return false;
 }
 
+const SLUG_BRANDS: Record<string, string> = {
+  nytimes: "New York Times",
+  phillyburbs: "PhillyBurbs",
+  livenowfox: "Fox",
+  foxnews: "Fox",
+  cuanschutz: "CU Anschutz",
+  frontiersin: "Frontiers",
+  withpower: "WithPower",
+  poltekkesjakarta: "Poltekkes Jakarta",
+  "lppm-stikesfa": "LPPM Stikesfa",
+  stikesfa: "LPPM Stikesfa",
+  unismuhpalu: "Universitas Muhammadiyah Palu",
+  unismuh: "Universitas Muhammadiyah Palu",
+};
+
 export function naturalizeSentence(text: string): string {
-  return stripCitationTags(text)
+  let next = stripCitationTags(text)
     .replace(/\bHealth detik\b/g, "detikHealth")
     .replace(
       /^(?:the\s+)?passages?\s+(?:dari|from)\s+([^,:.]{2,80}?)\s+(?:menyebut(?:kan)?|menyatakan|mengatakan|melaporkan|menulis|says|said|reports|reported|notes|noted|writes|wrote)\s*(?:,|:|bahwa|that)?\s*/iu,
       "$1: ",
-    )
-    .replace(/\s{2,}/g, " ")
-    .trim();
+    );
+  for (const [slug, brand] of Object.entries(SLUG_BRANDS)) {
+    next = next.replace(new RegExp(`\\b${escapeRegExp(slug)}\\b`, "gi"), brand);
+  }
+  return next.replace(/\s{2,}/g, " ").trim();
 }
 
 export function loneAccountHeading(language: string): string {
@@ -184,6 +201,10 @@ export function properNouns(sentence: string): string[] {
   return nouns;
 }
 
+function foldName(value: string): string {
+  return value.toLowerCase().replace(/\bpublic\b/g, "").replace(/[^a-z0-9]+/g, "");
+}
+
 export function nameInText(name: string, passage: string): boolean {
   if (hasWord(passage, name)) return true;
   const parts = name.split(/\s+/).filter(Boolean);
@@ -195,12 +216,12 @@ export function nameInText(name: string, passage: string): boolean {
   const dotted = parts.map((part) => `${escapeRegExp(part.charAt(0))}\\.`).join("\\s*");
   if (new RegExp(`\\b${dotted}`, "i").test(passage)) return true;
   const words = parts.filter((part) => part.length >= 3 && !FUNCTION_WORDS.has(part.toLowerCase()));
-  return words.length >= 2 && words.every((part) => hasWord(passage, part));
+  if (words.length >= 2 && words.every((part) => hasWord(passage, part))) return true;
+  const folded = foldName(name);
+  return folded.length >= 8 && foldName(passage).includes(folded);
 }
 
 const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int"]);
-
-const COMPOUND_SUFFIXES = [".or.id", ".ac.id", ".co.id", ".go.id", ".sch.id", ".web.id", ".my.id", ".biz.id", ".co.uk"];
 
 function isWeakPublisher(name: string): boolean {
   const tokens = name.toLowerCase().split(/[\s.]+/).filter(Boolean);
@@ -229,51 +250,55 @@ function publicationName(title?: string): string | null {
   return last;
 }
 
-const GENERIC_HOST_LABELS = new Set([
-  "ejournal", "journal", "journals", "jurnal", "repo", "repository", "repositori",
-  "ojs", "online", "web", "blog", "news", "docs", "sites", "site", "mail",
-]);
+function hostOf(raw?: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  if (!trimmed.includes(".")) return "";
+  return (trimmed.split("/")[0] ?? "").toLowerCase();
+}
 
-function hostBrand(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  let host = trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0] ?? "";
-  if (!host.includes(".")) return "";
-  const lowerHost = host.toLowerCase();
-  for (const suffix of COMPOUND_SUFFIXES) {
-    if (lowerHost.endsWith(suffix)) {
-      host = host.slice(0, -suffix.length);
-      break;
-    }
-  }
-  const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label.toLowerCase()) && !/^www\d*$/i.test(label));
-  if (labels[labels.length - 1]?.toLowerCase() === "detik") {
+function brandFromHost(host: string): string | null {
+  if (!host) return null;
+  const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label));
+  if (labels[labels.length - 1] === "detik") {
     const section = (labels[labels.length - 2] ?? "").replace(/\d+$/g, "");
     if (!section) return "detik";
     return `detik${section.charAt(0).toUpperCase()}${section.slice(1)}`;
   }
-  const specific = labels
-    .map((label) => label.replace(/\d+$/g, ""))
-    .filter((label) => label && !GENERIC_HOST_LABELS.has(label.toLowerCase()));
-  const chosen = specific.length > 0 ? specific[specific.length - 1] ?? "" : labels[labels.length - 1] ?? "";
-  if (!chosen) return "";
-  return `${chosen.charAt(0).toUpperCase()}${chosen.slice(1)}`;
+  for (const label of labels) {
+    const known = SLUG_BRANDS[label];
+    if (known) return known;
+  }
+  return null;
+}
+
+function isHumanPublisher(name: string): boolean {
+  if (!name || name.includes("://") || /\s/.test(name) === false) return false;
+  if (looksLikeArticle(name) || looksTruncated(name)) return false;
+  if (SLUG_BRANDS[name.toLowerCase()]) return false;
+  const tokens = name.split(/\s+/).filter(Boolean);
+  return tokens.length >= 2 && tokens.every((token) => token.length <= 28);
+}
+
+function prettifyHyphen(label: string): string | null {
+  if (!label.includes("-")) return null;
+  const parts = label.split("-").filter(Boolean);
+  if (parts.length < 2) return null;
+  return parts.map((part) => (part.length <= 4 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)).join(" ");
 }
 
 export function readablePublisher(name: string, title?: string, url?: string): string {
   const trimmed = name.trim();
   if (/^health\s+detik$/i.test(trimmed) || /^detik\s+health$/i.test(trimmed)) return "detikHealth";
-  const fromUrl = url ? hostBrand(url) : "";
-  const fromName = trimmed.includes(".") || trimmed.includes("://") ? hostBrand(trimmed) : "";
-  const brand = (fromUrl && !isWeakPublisher(fromUrl) ? fromUrl : "") || (fromName && !isWeakPublisher(fromName) ? fromName : "") || fromUrl || fromName;
-  if (brand && !isWeakPublisher(brand)) return brand;
-  const plainName = !trimmed.includes(".") && !trimmed.includes("://") && !looksLikeArticle(trimmed) && !isWeakPublisher(trimmed);
-  if (plainName) return trimmed;
+  const known = brandFromHost(hostOf(url) || hostOf(trimmed)) || SLUG_BRANDS[trimmed.toLowerCase()] || null;
+  if (isHumanPublisher(trimmed)) return trimmed;
   const journal = publicationName(title);
-  if (journal) return journal;
-  if (brand) return brand;
-  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !trimmed.includes("://")) return trimmed;
-  return brand || "Source";
+  if (journal && !SLUG_BRANDS[journal.toLowerCase()]) return journal;
+  if (known) return known;
+  const hyphen = prettifyHyphen(hostOf(url).split(".")[0] ?? "") || prettifyHyphen(trimmed.toLowerCase());
+  if (hyphen) return hyphen;
+  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !isWeakPublisher(trimmed)) return trimmed;
+  return known || "Source";
 }
 
 const REGIONS: string[][] = [
@@ -336,6 +361,10 @@ export type BriefLabels = {
   copy: string;
   download: string;
   copied: string;
+  passages: (count: number) => string;
+  checked: (count: number) => string;
+  unchecked: string;
+  fixture: string;
 };
 
 export function briefLabels(language: string): BriefLabels {
@@ -358,6 +387,10 @@ export function briefLabels(language: string): BriefLabels {
       copy: "Salin Markdown",
       download: "Unduh",
       copied: "Tersalin",
+      passages: (count) => `${count} kutipan`,
+      checked: (count) => `${count} klaim diperiksa`,
+      unchecked: "Belum diperiksa",
+      fixture: "Meja contoh",
     };
   }
   return {
@@ -378,7 +411,21 @@ export function briefLabels(language: string): BriefLabels {
     copy: "Copy Markdown",
     download: "Download",
     copied: "Copied",
+    passages: (count) => `${count} ${count === 1 ? "passage" : "passages"}`,
+    checked: (count) => `${count} ${count === 1 ? "claim" : "claims"} checked`,
+    unchecked: "Unchecked",
+    fixture: "Fixture desk",
   };
+}
+
+export function planFrameTitle(language: string, recency: boolean, timeRange: string | null): string {
+  const indonesian = /^id\b|indones/i.test(language);
+  if (!recency) return indonesian ? "Tanpa saringan waktu" : "No time filter";
+  const names: Record<string, string> = indonesian
+    ? { day: "hari", week: "minggu", month: "bulan", year: "tahun" }
+    : { day: "day", week: "week", month: "month", year: "year" };
+  const range = names[timeRange ?? "month"] ?? (timeRange ?? "month");
+  return indonesian ? `Rentang waktu: ${range}` : `Time range: ${range}`;
 }
 
 export function trailPhaseLabel(language: string, phase: string): string {
@@ -428,8 +475,8 @@ export function safeHttpUrl(url: string): string | null {
   }
 }
 
-export function formatDate(value: string | null): string {
-  if (!value) return "Date not reported";
+export function formatDate(value: string | null, language = "en"): string {
+  if (!value) return /^id\b|indones/i.test(language) ? "Tanggal tidak dilaporkan" : "Date not reported";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return clip(value, 40);
   return new Intl.DateTimeFormat("en-GB", {

@@ -289,13 +289,15 @@ describe("adjudicate", () => {
     expect(result.lede.some((sentence) => sentence.text.includes("17"))).toBe(false);
     expect(result.lede[0]?.citations).toContain("p1");
     expect(result.lede[0]?.text).toMatch(/Facebook|Chess night/i);
+    expect(result.lede[0]?.text).not.toMatch(/discusses|secara langsung/i);
     expect(result.aside).toHaveLength(1);
     expect(result.aside[0]?.text).toMatch(/17/);
     expect(result.aside[0]?.citations).toContain("p1");
     expect(result.insufficient).toBe(true);
-    expect(result.headline).toMatch(/tidak menjawab/i);
+    expect(result.headline).toMatch(/Braga/i);
+    expect(result.headline).toMatch(/tidak ada sumber/i);
     expect(result.gaps.join(" ")).not.toMatch(/passage check|factual sentence remained/i);
-    expect(result.gaps.join(" ")).toMatch(/halaman terdekat/i);
+    expect(result.summary.note).toMatch(/Model kedua/i);
   });
 
   it("moves a supported sentence the model marks irrelevant", () => {
@@ -554,5 +556,172 @@ describe("adjudicate", () => {
     const kept = result.lede.find((sentence) => sentence.text.includes("4:3"));
     expect(kept?.citations).toContain("p6");
     expect(result.aside.some((sentence) => sentence.text.includes("4:3"))).toBe(false);
+  });
+
+  it("keeps an absence statement that names a place missing from the passage", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://facebook.com/massillonlibrary/posts/1",
+      title: "Chess night",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "The club meets on Thursdays at the branch.",
+    }];
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran di perpustakaan Braga",
+      insufficient: true,
+      lede: [{
+        text: "None of the stored sources gives an attendance figure for the chess club at the Braga public library.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "en",
+      question: "How many people attend the chess club at the Braga public library?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/Braga public library/);
+    expect(result.headline).toMatch(/perpustakaan Braga|Braga public library|Tidak ada angka/i);
+  });
+
+  it("matches a library name to the URL slug", () => {
+    const pages: Passage[] = [{
+      id: "p4",
+      url: "https://www.facebook.com/massillonlibrary/posts/9",
+      title: "Thursday club",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "The club meets on Thursdays at the branch.",
+    }];
+    const claim = "The Facebook post from Massillon Public Library said the club meets on Thursdays.";
+    const draft = tagDraft({
+      headline: "The club meets on Thursdays",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p4"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      question: "When does the Massillon Public Library chess club meet?",
+    });
+    expect(result.summary.droppedSentences.some((sentence) => /Massillon/i.test(sentence.reason))).toBe(false);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/Massillon Public Library/);
+  });
+
+  it("treats a verbatim sentence as supported even when the model dissents", () => {
+    const pages: Passage[] = [{
+      id: "p9",
+      url: "https://example.com/kalshi",
+      title: "Senate market",
+      publisher: "Kalshi",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi showed 61 percent favoring a Republican Senate win.",
+    }];
+    const claim = "Kalshi showed 61 percent favoring a Republican Senate win.";
+    const draft = tagDraft({
+      headline: "Kalshi favors a Republican Senate",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p9"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "partial", reason: "narrow" }],
+      mode: "live",
+      modelError: null,
+      question: "Who does Kalshi favor in the Senate?",
+    });
+    const kept = result.lede.find((sentence) => sentence.text.includes("61"));
+    expect(kept).toBeTruthy();
+    expect(kept?.flag).toBeUndefined();
+  });
+
+  it("drops a margin sentence that only restates a published pair", () => {
+    const pages: Passage[] = [{
+      id: "p2",
+      url: "https://www.nytimes.com/siena",
+      title: "NYT/Siena poll",
+      publisher: "nytimes.com",
+      publishedDate: null,
+      origin: "extract",
+      text: "The NYT/Siena poll found Democrats ahead of Republicans 52 to 41, a lead of 11 percentage points.",
+    }];
+    const draft = tagDraft({
+      headline: "NYT/Siena has Democrats ahead",
+      insufficient: false,
+      lede: [
+        { text: "The NYT/Siena poll found Democrats ahead of Republicans 52 to 41.", kind: "fact", citations: ["p2"] },
+        { text: "The lead is 11 percentage points.", kind: "fact", citations: ["p2"] },
+      ],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "What is the NYT/Siena margin?",
+    });
+    expect(result.lede.some((sentence) => sentence.text.includes("52"))).toBe(true);
+    expect(result.lede.some((sentence) => sentence.text.includes("11"))).toBe(false);
+  });
+
+  it("summarizes a disagreement side that repeats the opening", () => {
+    const opening = "Grid operator notes released that afternoon attributed the 9 September 2026 disturbance to a transformer fire at the Caceres substation, and the operator called the fire the start of the outage.";
+    const other = "A separate engineering memo argued the disturbance began with a frequency trip in a cluster of solar inverters in Alentejo, and that the Caceres fire was a consequence rather than the trigger.";
+    const draft = tagDraft({
+      headline: "Reports do not agree on the Iberian grid trigger",
+      insufficient: false,
+      lede: [{ text: opening, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Trigger",
+        sides: [
+          { label: "Fire", sentences: [{ text: opening, kind: "fact", citations: ["p1"] }] },
+          { label: "Inverters", sentences: [{ text: other, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const pages: Passage[] = [
+      { id: "p1", url: "https://example.com/fire", title: "Fire", publisher: "Iberian Dispatch", publishedDate: null, origin: "extract", text: opening },
+      { id: "p2", url: "https://example.com/memo", title: "Memo", publisher: "Peninsula Power Review", publishedDate: null, origin: "extract", text: other },
+    ];
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "What triggered the Iberian grid disturbance?",
+    });
+    const fire = result.conflicts[0]?.sides.find((side) => side.label === "Fire")?.sentences[0];
+    expect(fire?.citations).toContain("p1");
+    expect(fire?.text.length).toBeLessThan(opening.length);
+    expect(fire?.text).not.toBe(opening);
   });
 });
