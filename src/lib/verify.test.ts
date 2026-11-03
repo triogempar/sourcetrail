@@ -1030,6 +1030,6 @@ describe("adjudicate", () => {
     const side = result.conflicts.flatMap((conflict) => conflict.sides).find((item) => item.label === "Finds little difference");
     expect(side?.sentences[0]?.text).toMatch(/little difference/i);
     expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
-    expect(result.headline).toBe("Bukti yang tersimpan beragam");
+    expect(result.headline).toBe("Bukti beragam soal weight loss");
   });
 });

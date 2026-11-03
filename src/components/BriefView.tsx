@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { briefToMarkdown, citationOrder, footnoteNumber } from "@/lib/markdown";
+import { briefToMarkdown, citationOrder, footnoteNumber, groupBySource } from "@/lib/markdown";
 import { briefLabels, formatDate } from "@/lib/text";
 import { coerceSentences, type InquiryOutcome } from "@/lib/stream-state";
-import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
+import type { Brief, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export function BriefView({
   brief,
@@ -20,6 +20,7 @@ export function BriefView({
   activePassageId: string | null;
 }) {
   const order = useMemo(() => citationOrder(brief), [brief]);
+  const sources = useMemo(() => groupBySource(brief.passages, order), [brief.passages, order]);
   const [copied, setCopied] = useState(false);
   const markdown = useMemo(() => briefToMarkdown(brief, summary), [brief, summary]);
 
@@ -176,21 +177,55 @@ export function BriefView({
           </ul>
         </section>
       ) : null}
-      {brief.passages.length > 0 ? (
+      {sources.kept.length > 0 ? (
         <section className="source-index" aria-label={labels.kept}>
           <h2>{labels.kept}</h2>
           <ul>
-            {brief.passages.map((passage) => {
-              const number = footnoteNumber(order, passage.id);
-              return (
-                <li key={passage.id}>
-                  <button type="button" onClick={() => onCite(passage.id, brief.lede[0]?.text || passage.text)}>
-                    {number > 0 ? `${number}. ` : `${labels.unread}. `}
-                    {passage.publisher}. {passage.title}. {formatDate(passage.publishedDate, brief.language)}
-                  </button>
-                </li>
-              );
-            })}
+            {sources.kept.map((group) => (
+              <li key={group.url}>
+                {group.passages.length === 1 ? (
+                  <PassageButton
+                    passage={group.passages[0]!}
+                    order={order}
+                    language={brief.language}
+                    claim={brief.lede[0]?.text || group.passages[0]!.text}
+                    onCite={onCite}
+                  />
+                ) : (
+                  <>
+                    <p>{group.publisher}. {group.title}.</p>
+                    <ul>
+                      {group.passages.map((passage) => (
+                        <li key={passage.id}>
+                          <PassageButton
+                            passage={passage}
+                            order={order}
+                            language={brief.language}
+                            claim={brief.lede[0]?.text || passage.text}
+                            onCite={onCite}
+                            hidePublisher
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {sources.unread.length > 0 ? (
+        <section className="source-index unread" aria-label={labels.unread}>
+          <h2>{labels.unread}</h2>
+          <ul>
+            {sources.unread.map((group) => (
+              <li key={group.url}>
+                <button type="button" onClick={() => onCite(group.passages[0]!.id, group.passages[0]!.text)}>
+                  {group.publisher}. {group.title}. {formatDate(group.passages[0]!.publishedDate, brief.language)}
+                </button>
+              </li>
+            ))}
           </ul>
         </section>
       ) : null}
@@ -218,6 +253,33 @@ export function BriefView({
         </section>
       ) : null}
     </article>
+  );
+}
+
+function PassageButton({
+  passage,
+  order,
+  language,
+  claim,
+  onCite,
+  hidePublisher,
+}: {
+  passage: Passage;
+  order: string[];
+  language: string;
+  claim: string;
+  onCite: (passageId: string, claim: string) => void;
+  hidePublisher?: boolean;
+}) {
+  const number = footnoteNumber(order, passage.id);
+  const prefix = number > 0 ? `${number}. ` : "";
+  const label = hidePublisher
+    ? `${prefix}${passage.title}`
+    : `${prefix}${passage.publisher}. ${passage.title}. ${formatDate(passage.publishedDate, language)}`;
+  return (
+    <button type="button" onClick={() => onCite(passage.id, claim)}>
+      {label}
+    </button>
   );
 }
 

@@ -5,7 +5,7 @@ import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
 import { parseDraft, parsePlan, parseRewrite, readVerdicts, salvageDraft, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
-import { clip, heuristicRewrite, planFrameTitle, publisherFromUrl, readablePublisher, recencyDetail, uniqueGaps } from "@/lib/text";
+import { clip, heuristicRewrite, planFrameDetail, planFrameTitle, publisherFromUrl, readablePublisher, recencyDetail, uniqueGaps } from "@/lib/text";
 import type {
   AgentDeps,
   Brief,
@@ -77,7 +77,7 @@ export async function runResearch(
         phase: "plan",
         status: "info",
         title: planFrameTitle(plan.language, plan.recency, plan.timeRange),
-        detail: `${plan.subquestions.length} lines of inquiry. Language: ${plan.language}.`,
+        detail: planFrameDetail(plan.language, plan.subquestions.length),
       },
     });
     for (const subquestion of plan.subquestions) {

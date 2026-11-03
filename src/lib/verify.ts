@@ -383,6 +383,7 @@ export function adjudicate(input: {
     softenConflictHeadline(input.draft.headline, input.language ?? "en", disputed),
     input.language ?? "en",
     disputed,
+    topicPhrase(input.question ?? "", conflictsOut),
   );
   if (keptSentences.length === 0) {
     insufficient = true;
@@ -439,9 +440,16 @@ function softenConflictHeadline(headline: string, language: string, hasTwoSidedC
     : "The stored pages do not settle one answer";
 }
 
-function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean): string {
-  if (!hasTwoSidedConflict || CONFLICT_HEADLINE.test(headline) || /beragam|mixed evidence|do not agree|tidak sepakat/i.test(headline)) return headline;
-  return /^id\b|indones/i.test(language) ? "Bukti yang tersimpan beragam" : "The stored evidence is mixed";
+function topicPhrase(question: string, conflicts: { topic: string; sides: { sentences: Sentence[] }[] }[]): string {
+  const named = conflicts.find((conflict) => conflict.sides.length >= 2 && !/berlawanan di sumber yang sama|disagrees with itself/i.test(conflict.topic));
+  const raw = (named?.topic || question).replace(/\s+/g, " ").trim().replace(/[?？.]+$/g, "");
+  return raw.replace(/^(?:apakah|berapa|bagaimana|mengapa|how many|how|what|does|do|is|are|did)\s+/i, "");
+}
+
+function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean, topic: string): string {
+  if (!hasTwoSidedConflict || !topic || CONFLICT_HEADLINE.test(headline) || /beragam|mixed evidence|do not agree|tidak sepakat/i.test(headline)) return headline;
+  const phrase = `${topic.charAt(0).toLowerCase()}${topic.slice(1)}`;
+  return /^id\b|indones/i.test(language) ? `Bukti beragam soal ${phrase}` : `Mixed evidence on ${phrase}`;
 }
 
 const OPINION_CLAIM = /\b(survey|poll|pew|adults|expected|voters|responden|survei|jajak|pendapat)\b/i;

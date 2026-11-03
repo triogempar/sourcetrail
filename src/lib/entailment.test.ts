@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessSupport } from "@/lib/entailment";
-import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, offTopicReason, readablePublisher } from "@/lib/text";
+import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, offTopicReason, planFrameDetail, readablePublisher } from "@/lib/text";
 
 const PASSAGE = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h, measured by the city's technical university on 28 October 2026.";
 
@@ -101,6 +101,10 @@ describe("assessSupport", () => {
     }
     expect(naturalizeSentence("Sumber diagnos.co.id juga mencatat angka yang sama.")).toBe("Sumber Diagnos juga mencatat angka yang sama.");
     expect(readablePublisher("Athletic lettering faces", "Athletic lettering faces", "https://www.myfonts.com/fonts/braga")).toBe("Myfonts");
+    expect(readablePublisher("cookpolitical.com")).toBe("Cook Political Report");
+    expect(readablePublisher("theconversation.com")).toBe("The Conversation");
+    expect(readablePublisher("poltekkesjakarta1.ac.id")).toBe("Poltekkes Jakarta I");
+    expect(planFrameDetail("id", 4)).toBe("4 jalur pertanyaan. Bahasa: id.");
   });
 
   it("treats matching figures and names as supported when the verb is paraphrased", () => {

@@ -135,6 +135,9 @@ const SLUG_BRANDS: Record<string, string> = {
   frontiersin: "Frontiers",
   withpower: "WithPower",
   poltekkesjakarta: "Poltekkes Jakarta",
+  poltekkesjakarta1: "Poltekkes Jakarta I",
+  cookpolitical: "Cook Political Report",
+  theconversation: "The Conversation",
   "lppm-stikesfa": "LPPM Stikesfa",
   stikesfa: "LPPM Stikesfa",
   unismuhpalu: "Universitas Muhammadiyah Palu",
@@ -273,6 +276,55 @@ function hostOf(raw?: string): string {
   return (trimmed.split("/")[0] ?? "").toLowerCase();
 }
 
+const COMPOUND_WORDS = ["poltekkes", "jakarta", "conversation", "political", "report", "cook", "the", "health", "journal", "science", "news"];
+
+function romanNumeral(value: string): string {
+  const n = Number(value);
+  const numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
+  if (!Number.isInteger(n) || n < 1 || n > numerals.length) return value;
+  return numerals[n - 1] ?? value;
+}
+
+function knownBrand(label: string): string | null {
+  const exact = SLUG_BRANDS[label];
+  if (exact) return exact;
+  const base = label.replace(/\d+$/, "");
+  const mapped = base !== label ? SLUG_BRANDS[base] : undefined;
+  if (!mapped) return null;
+  const suffix = romanNumeral(label.slice(base.length));
+  return suffix ? `${mapped} ${suffix}` : mapped;
+}
+
+function segmentLabel(label: string): string[] {
+  const digits = label.match(/\d+$/)?.[0] ?? "";
+  let rest = label.slice(0, label.length - digits.length);
+  const parts: string[] = [];
+  while (rest.length > 0) {
+    const hit = COMPOUND_WORDS.filter((word) => rest.startsWith(word)).sort((a, b) => b.length - a.length)[0];
+    if (hit) {
+      parts.push(hit);
+      rest = rest.slice(hit.length);
+      continue;
+    }
+    const next = COMPOUND_WORDS.map((word) => rest.indexOf(word)).filter((index) => index > 0).sort((a, b) => a - b)[0];
+    if (next === undefined) {
+      parts.push(rest);
+      break;
+    }
+    parts.push(rest.slice(0, next));
+    rest = rest.slice(next);
+  }
+  if (digits) parts.push(romanNumeral(digits));
+  return parts;
+}
+
+function presentLabel(label: string): string {
+  const known = knownBrand(label);
+  if (known) return known;
+  if (label.length <= 4 && !/\d/.test(label)) return label.toUpperCase();
+  return segmentLabel(label).map((part) => (/^[IVX]+$/.test(part) ? part : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)).join(" ");
+}
+
 function brandFromHost(host: string): string | null {
   if (!host) return null;
   const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label));
@@ -282,7 +334,7 @@ function brandFromHost(host: string): string | null {
     return `detik${section.charAt(0).toUpperCase()}${section.slice(1)}`;
   }
   for (const label of labels) {
-    const known = SLUG_BRANDS[label];
+    const known = knownBrand(label);
     if (known) return known;
   }
   return null;
@@ -332,13 +384,12 @@ function fallbackBrand(raw: string): string | null {
   const labels = hostLabels(host);
   if (labels.length === 0) return null;
   for (const label of labels) {
-    const known = SLUG_BRANDS[label];
+    const known = knownBrand(label);
     if (known) return known;
   }
   const core = labels[labels.length - 1] ?? "";
   if (core.length < 2) return null;
-  if (core.length <= 4) return core.toUpperCase();
-  return `${core.charAt(0).toUpperCase()}${core.slice(1)}`;
+  return presentLabel(core);
 }
 
 const REGIONS: string[][] = [
@@ -456,6 +507,11 @@ export function briefLabels(language: string): BriefLabels {
     unchecked: "Unchecked",
     fixture: "Fixture desk",
   };
+}
+
+export function planFrameDetail(language: string, count: number): string {
+  if (/^id\b|indones/i.test(language)) return `${count} jalur pertanyaan. Bahasa: ${language}.`;
+  return `${count} lines of inquiry. Language: ${language}.`;
 }
 
 export function planFrameTitle(language: string, recency: boolean, timeRange: string | null): string {

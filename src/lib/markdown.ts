@@ -1,10 +1,12 @@
+import { statesAbsence } from "@/lib/entailment";
 import { coerceSentences } from "@/lib/stream-state";
-import { briefLabels, formatDate } from "@/lib/text";
-import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
+import { briefLabels, canonicalUrl, formatDate } from "@/lib/text";
+import type { Brief, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflicts" | "aside">): string[] {
   const order: string[] = [];
   const push = (sentence: Sentence) => {
+    if (statesAbsence(sentence.text)) return;
     for (const id of sentence.citations) {
       if (!order.includes(id)) order.push(id);
     }
@@ -19,6 +21,46 @@ export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflict
 export function footnoteNumber(order: string[], id: string): number {
   const index = order.indexOf(id);
   return index === -1 ? 0 : index + 1;
+}
+
+export type SourceGroup = {
+  url: string;
+  publisher: string;
+  title: string;
+  passages: Passage[];
+};
+
+export function groupBySource(passages: Passage[], order: string[]): { kept: SourceGroup[]; unread: SourceGroup[] } {
+  const byUrl = new Map<string, Passage[]>();
+  for (const passage of passages) {
+    const key = canonicalUrl(passage.url);
+    byUrl.set(key, [...(byUrl.get(key) ?? []), passage]);
+  }
+  const numberOf = (passage: Passage) => footnoteNumber(order, passage.id);
+  const groups = [...byUrl.values()].map((items) => {
+    const passagesInGroup = [...items].sort((a, b) => {
+      const left = numberOf(a);
+      const right = numberOf(b);
+      if (left === 0 && right === 0) return a.id.localeCompare(b.id);
+      if (left === 0) return 1;
+      if (right === 0) return -1;
+      return left - right;
+    });
+    const first = passagesInGroup[0]!;
+    return {
+      url: canonicalUrl(first.url),
+      publisher: first.publisher,
+      title: first.title,
+      passages: passagesInGroup,
+    };
+  });
+  const rank = (group: SourceGroup) => {
+    const numbers = group.passages.map(numberOf).filter((number) => number > 0);
+    return numbers.length > 0 ? Math.min(...numbers) : Number.MAX_SAFE_INTEGER;
+  };
+  const kept = groups.filter((group) => group.passages.some((passage) => numberOf(passage) > 0)).sort((a, b) => rank(a) - rank(b));
+  const unread = groups.filter((group) => group.passages.every((passage) => numberOf(passage) === 0)).sort((a, b) => a.passages[0]!.id.localeCompare(b.passages[0]!.id));
+  return { kept, unread };
 }
 
 function renderSentence(sentence: Sentence, order: string[], inference: string, check: string): string {

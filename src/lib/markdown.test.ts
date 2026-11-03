@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { briefToMarkdown, citationOrder } from "@/lib/markdown";
+import { briefToMarkdown, citationOrder, groupBySource } from "@/lib/markdown";
 import { takeNdjson } from "@/lib/ndjson";
 import { emptyStream, reduceStream } from "@/lib/stream-state";
 import type { Brief, TrailEntry } from "@/lib/types";
@@ -74,6 +74,48 @@ describe("markdown export", () => {
     expect(insteadAt).toBeGreaterThan(answerAt);
     expect(markdown).toContain("17 people.[^2]");
     expect(citationOrder(withAside)).toEqual(["p1", "p9"]);
+  });
+
+  it("does not cite every page named only by an absence sentence", () => {
+    const absence: Brief = {
+      ...brief,
+      insufficient: true,
+      lede: [{
+        id: "s9",
+        text: "None of the stored sources gives an attendance figure for the Braga library.",
+        kind: "fact",
+        citations: ["p1", "p9"],
+      }],
+      passages: [
+        ...brief.passages,
+        {
+          id: "p9",
+          url: "https://example.com/other",
+          title: "Other page",
+          publisher: "Other",
+          publishedDate: null,
+          text: "A typeface named Braga.",
+          origin: "extract",
+        },
+        {
+          id: "p2",
+          url: "https://example.com/sourcetrail/harbor-desk/hamburg-range",
+          title: "Range, continued",
+          publisher: "Harbor Desk",
+          publishedDate: "2026-10-28",
+          text: "A second chunk of the same page.",
+          origin: "extract",
+        },
+      ],
+    };
+    expect(citationOrder(absence)).toEqual([]);
+    const grouped = groupBySource(absence.passages, citationOrder({
+      ...absence,
+      lede: [{ id: "s1", text: "A Hamburg pilot reported a 612 km highway range.", kind: "fact", citations: ["p2"] }],
+    }));
+    expect(grouped.kept.map((group) => group.publisher)).toEqual(["Harbor Desk"]);
+    expect(grouped.kept[0]?.passages.map((passage) => passage.id)).toEqual(["p2", "p1"]);
+    expect(grouped.unread.map((group) => group.title)).toContain("Other page");
   });
 });
 
