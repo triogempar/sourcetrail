@@ -57,7 +57,9 @@ export function writePrompt(input: {
       "Do not repeat a sentence in a later section.",
       "kind inference is a conclusion the passages support without stating it in those words. An inference must not add numbers, dates, or names absent from the passages.",
       "If two passages make incompatible claims, put both in conflicts and do not pick a winner.",
-      "If the passages do not answer the question, set insufficient true, keep lede empty or limited to what the passages literally say, and list the gaps.",
+      "A fact that is true but about a different place, institution, or population does not answer the question. Leave it out of lede and sections. If nothing answers the question, set insufficient true.",
+      "If two chunks of the same source disagree, put both in conflicts.",
+      "If the passages do not answer the question, set insufficient true, keep lede empty, and list the gaps. Do not fill the answer with related but different cases.",
       "Do not use world knowledge to fill a gap.",
       JSON_ONLY,
       `Schema: {"headline":"...","insufficient":false,"lede":[{"text":"...","kind":"fact","citations":["p1"]}],"sections":[{"heading":"...","sentences":[]}],"conflicts":[{"topic":"...","sides":[{"label":"...","sentences":[{"text":"...","kind":"fact","citations":["p2"]}]}]}],"gaps":["..."]}`,
@@ -66,7 +68,7 @@ export function writePrompt(input: {
   };
 }
 
-export function verifyPrompt(sentences: PromptSentence[], passages: Passage[]): { system: string; user: string } {
+export function verifyPrompt(sentences: PromptSentence[], passages: Passage[], question: string): { system: string; user: string } {
   const blocks = sentences.map((sentence) => {
     const cited = sentence.citations.map((id) => {
       const passage = passages.find((item) => item.id === id);
@@ -81,10 +83,11 @@ export function verifyPrompt(sentences: PromptSentence[], passages: Passage[]): 
       "Mark unsupported when a number, date, or name in the sentence is absent from the cited passages.",
       "Mark partial when the passage supports only part of the sentence.",
       "Inferences may be supported without a verbatim match, but they are unsupported if they add new figures or names.",
+      "Set relevant false when the sentence is about a different place, institution, or population than the question, even if the cited text supports the wording.",
       JSON_ONLY,
-      `Schema: {"sentences":[{"id":"s1","verdict":"supported","reason":"figure matches"}]}`,
+      `Schema: {"sentences":[{"id":"s1","verdict":"supported","relevant":true,"reason":"same place"}]}`,
       "verdict is supported, unsupported, or partial. Each reason is at most 8 words.",
     ].join(" "),
-    user: blocks,
+    user: `Question:\n${question}\n\n${blocks}`,
   };
 }

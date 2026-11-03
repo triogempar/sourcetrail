@@ -246,8 +246,126 @@ describe("adjudicate", () => {
       mode: "live",
       modelError: null,
     });
-    expect(result.summary.droppedSentences.filter((sentence) => sentence.text === text)).toHaveLength(1);
+    expect(result.summary.droppedSentences.filter((sentence) => sentence.text.includes("40"))).toHaveLength(1);
     expect(result.summary.dropped).toBe(1);
     expect(result.gaps.filter((gap) => gap.toLowerCase().includes("price"))).toHaveLength(1);
+  });
+
+  it("moves an off-topic but true sentence out of the answer", () => {
+    const draft = tagDraft({
+      headline: "About 17 people attend the club",
+      insufficient: false,
+      lede: [{
+        text: "A Facebook post said about 17 people attended a library chess club in the United States.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const library: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/facebook",
+      title: "Chess night",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "A Facebook post said about 17 people attended a library chess club in the United States.",
+    }];
+    const result = adjudicate({
+      draft,
+      passages: library,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?",
+    });
+    expect(result.lede).toHaveLength(0);
+    expect(result.aside.join(" ")).toMatch(/17/);
+    expect(result.insufficient).toBe(true);
+    expect(result.headline).toMatch(/tidak menjawab/i);
+  });
+
+  it("moves a supported sentence the model marks irrelevant", () => {
+    const draft = tagDraft({
+      headline: "Braga employs dozens of people",
+      insufficient: false,
+      lede: [{
+        text: "PT Braga Teknologi employs 40 people at its Bandung office.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const library: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/braga-tech",
+      title: "Headcount",
+      publisher: "PT Braga Teknologi",
+      publishedDate: null,
+      origin: "extract",
+      text: "PT Braga Teknologi employs 40 people at its Bandung office.",
+    }];
+    const result = adjudicate({
+      draft,
+      passages: library,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "company not library" }],
+      mode: "live",
+      modelError: null,
+      question: "How many people attend the chess club at the Braga library in Bandung?",
+    });
+    expect(result.lede).toHaveLength(0);
+    expect(result.aside[0]).toMatch(/40 people/);
+  });
+
+  it("shows both risk findings from two chunks of one journal", () => {
+    const journal: Passage[] = [
+      {
+        id: "p7",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Shah et al. found that more than 2 cups a day were linked to a lower risk of hypertension.",
+      },
+      {
+        id: "p8",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Kopi dan risiko hipertensi",
+      insufficient: false,
+      lede: [{
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+        kind: "fact",
+        citations: ["p8"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: journal,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah lebih dari 2 cangkir kopi sehari menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]?.sides).toHaveLength(2);
+    expect(result.conflicts[0]?.topic).toMatch(/berlawanan/i);
   });
 });

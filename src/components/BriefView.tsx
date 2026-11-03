@@ -78,11 +78,17 @@ export function BriefView({
           </p>
         </div>
         <div className="export">
-          <button type="button" className="ghost" onClick={() => void copyMarkdown()}>{copied ? "Copied" : "Copy Markdown"}</button>
-          <button type="button" className="ghost" onClick={downloadMarkdown}>Download</button>
+          <button type="button" className="ghost" onClick={() => void copyMarkdown()}>{copied ? labels.copied : labels.copy}</button>
+          <button type="button" className="ghost" onClick={downloadMarkdown}>{labels.download}</button>
         </div>
       </header>
       {brief.insufficient ? gaps : null}
+      {brief.aside.length > 0 ? (
+        <section className="instead" aria-label={labels.instead}>
+          <h2>{labels.instead}</h2>
+          <ul>{brief.aside.map((item) => <li key={item}>{item}</li>)}</ul>
+        </section>
+      ) : null}
       {brief.lede.length > 0 ? (
         <p className="lede">
           {brief.lede.map((sentence) => (

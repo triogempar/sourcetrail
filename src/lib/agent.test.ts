@@ -151,6 +151,76 @@ describe("credit cap", () => {
   });
 });
 
+describe("verify batches", () => {
+  it("checks batches at the same time", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const passage = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h.";
+    const sentences = Array.from({ length: 9 }, (_, index) => ({
+      text: index === 0 ? passage : `${passage} Detail ${index} remains the same highway figure.`,
+      kind: "fact" as const,
+      citations: ["p1"],
+    }));
+    const llm: Llm = {
+      async complete(input) {
+        if (input.task === "plan") {
+          return JSON.stringify({
+            language: "en",
+            recency: false,
+            topic: "general",
+            subquestions: [
+              { id: "sq1", question: "What range was reported for the car?", query: "hamburg range" },
+              { id: "sq2", question: "Who measured the highway range?", query: "hamburg measurement" },
+              { id: "sq3", question: "Was the trial a single car?", query: "hamburg single car" },
+            ],
+          });
+        }
+        if (input.task === "write") {
+          return JSON.stringify({
+            headline: "One Hamburg car posted a 612 km highway range",
+            insufficient: false,
+            lede: sentences,
+            sections: [],
+            conflicts: [],
+            gaps: [],
+          });
+        }
+        if (input.task !== "verify") return JSON.stringify({ query: "hamburg range follow up" });
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        active -= 1;
+        const ids = [...input.user.matchAll(/\bid: (s\d+)\b/g)].map((match) => match[1]);
+        return JSON.stringify({ sentences: ids.map((id) => ({ id, verdict: "supported", relevant: true, reason: "ok" })) });
+      },
+    };
+    const search: SearchClient = {
+      async search() {
+        return [{
+          title: "Range",
+          url: "https://example.com/range",
+          content: passage,
+          score: 0.9,
+          publishedDate: "2026-10-28",
+          publisher: "Harbor Desk",
+        }];
+      },
+      async extract(input) {
+        return { documents: input.urls.map((url) => ({ url, rawContent: passage })), failed: [] };
+      },
+    };
+    await runResearch("What highway range did the Hamburg pilot report?", {
+      mode: "live",
+      llm,
+      search,
+      models: fixtureConfig().models,
+      maxCredits: 8,
+      tokens: fixtureConfig().tokens,
+    }, () => {});
+    expect(maxActive).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("terminal search errors", () => {
   it("does not buy a follow-up search after Tavily rejects the key", async () => {
     let searches = 0;

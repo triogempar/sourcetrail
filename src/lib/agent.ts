@@ -5,7 +5,7 @@ import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
 import { parseDraft, parsePlan, parseRewrite, readVerdicts, salvageDraft, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
-import { clip, heuristicRewrite, publisherFromUrl, readablePublisher, uniqueGaps } from "@/lib/text";
+import { clip, heuristicRewrite, publisherFromUrl, readablePublisher, recencyDetail, uniqueGaps } from "@/lib/text";
 import type {
   AgentDeps,
   Brief,
@@ -89,7 +89,7 @@ export async function runResearch(
           status: "ok",
           title: subquestion.question,
           query: subquestion.query,
-          detail: subquestion.needsRecency ? "Recent sources preferred." : "No recency filter on this line.",
+          detail: recencyDetail(plan.language, subquestion.needsRecency),
         },
       });
     }
@@ -262,18 +262,20 @@ export async function runResearch(
     let modelError: string | null = null;
     emit({ type: "phase", phase: "verify", message: "Checking each sentence against its passage" });
     if (facts.length > 0) {
-      const collected = [];
+      const collected: ModelVerdict[] = [];
       const problems: string[] = [];
-      for (let index = 0; index < facts.length; index += 8) {
-        const batch = facts.slice(index, index + 8);
-        throwIfAborted(signal);
+      const batches: ReturnType<typeof listWorkingSentences>[] = [];
+      for (let index = 0; index < facts.length; index += 8) batches.push(facts.slice(index, index + 8));
+      const settled = await Promise.all(batches.map(async (batch) => {
         try {
-          collected.push(...await verifyBatch(batch, passages));
+          return await verifyBatch(batch, passages);
         } catch (error) {
           if (isAbort(error) || isTerminalProviderError(error)) throw error;
           problems.push(providerMessage(error));
+          return [] as ModelVerdict[];
         }
-      }
+      }));
+      for (const verdicts of settled) collected.push(...verdicts);
       if (collected.length > 0) modelVerdicts = collected;
       else if (problems[0]) {
         modelError = problems[0];
@@ -308,6 +310,7 @@ export async function runResearch(
       sections: adjudicated.sections,
       conflicts: adjudicated.conflicts,
       gaps,
+      aside: adjudicated.aside,
       searched: searchedLog,
       passages,
       models: { ...deps.models, mode: deps.mode },
@@ -343,7 +346,7 @@ export async function runResearch(
   }
 
   async function verifyBatch(batch: ReturnType<typeof listWorkingSentences>, sourcePassages: Passage[]): Promise<ModelVerdict[]> {
-    const pair = verifyPrompt(batch, sourcePassages);
+    const pair = verifyPrompt(batch, sourcePassages, question);
     const maxTokens = Math.min(deps.tokens.verify, 240 + batch.length * 80);
     const ask = (user: string) => deps.llm.complete({
       task: "verify",
@@ -544,6 +547,7 @@ function blankBrief(
     sections: [],
     conflicts: [],
     gaps: gaps.length > 0 ? gaps : ["No retrieved passage states an answer to the question."],
+    aside: [],
     searched,
     passages: [],
     models: { ...deps.models, mode: deps.mode },

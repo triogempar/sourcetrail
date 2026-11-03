@@ -50,6 +50,11 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     });
     lines.push("");
   }
+  if (brief.aside.length > 0) {
+    lines.push(`## ${labels.instead}`, "");
+    brief.aside.forEach((item) => lines.push(`- ${item}`));
+    lines.push("");
+  }
   if (brief.lede.length > 0) {
     lines.push(brief.lede.map((item) => sentence(item)).join(" "), "");
   }

@@ -142,6 +142,7 @@ export function parseDraft(data: unknown): DraftBrief {
 export type ModelVerdict = {
   id: string;
   verdict: "supported" | "unsupported" | "partial";
+  relevant?: boolean;
   reason: string;
 };
 
@@ -158,10 +159,13 @@ export function parseVerdicts(data: unknown): ModelVerdict[] {
     const id = row.id.trim();
     const verdict = row.verdict;
     if (!/^s\d+$/.test(id)) continue;
-    if (verdict !== "supported" && verdict !== "unsupported" && verdict !== "partial") continue;
+    const offTopic = verdict === "off_topic" || row.relevant === false;
+    const normalized = verdict === "off_topic" ? "supported" : verdict;
+    if (normalized !== "supported" && normalized !== "unsupported" && normalized !== "partial") continue;
     verdicts.push({
       id,
-      verdict,
+      verdict: normalized,
+      relevant: !offTopic,
       reason: typeof row.reason === "string" ? clip(row.reason, 240) : "",
     });
   }
@@ -182,7 +186,7 @@ export function salvageVerdicts(text: string): ModelVerdict[] {
       const id = idFirst ? match[1] : match[2];
       const verdict = idFirst ? match[2] : match[1];
       if (!id || (verdict !== "supported" && verdict !== "unsupported" && verdict !== "partial")) continue;
-      if (!found.has(id)) found.set(id, { id, verdict, reason: "" });
+      if (!found.has(id)) found.set(id, { id, verdict, relevant: true, reason: "" });
     }
   }
   return [...found.values()];

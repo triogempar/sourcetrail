@@ -1,6 +1,6 @@
 import { assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
-import { canonicalUrl, cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
+import { canonicalUrl, cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -61,7 +61,7 @@ export function listWorkingSentences(brief: WorkingBrief): WorkingSentence[] {
 }
 
 type Judgement = {
-  action: "keep" | "flag" | "drop";
+  action: "keep" | "flag" | "drop" | "aside";
   reason: string;
 };
 
@@ -97,6 +97,7 @@ function judgeSentence(
   sentence: WorkingSentence,
   passages: Passage[],
   verdicts: Map<string, ModelVerdict>,
+  question: string,
 ): Judgement {
   const cited = evidenceTexts(sentence.citations, passages);
   const model = verdicts.get(sentence.id)?.verdict;
@@ -117,6 +118,12 @@ function judgeSentence(
     );
   }
   const support = assessSupport(sentence.text, cited);
+  const localOff = question ? offTopicReason(question, sentence.text) : null;
+  const modelOff = verdicts.get(sentence.id)?.relevant === false;
+  const offTopic = Boolean(localOff) || modelOff;
+  if (offTopic && (support.level !== "unsupported" || model === "supported")) {
+    return { action: "aside", reason: localOff ?? "The sentence does not answer this question's place or subject." };
+  }
   if (support.level === "unsupported") return soften(support.reason, model);
   if (support.level === "partial") {
     if (model === "unsupported") {
@@ -171,6 +178,7 @@ export function adjudicate(input: {
   mode: "live" | "mock";
   modelError: string | null;
   language?: string;
+  question?: string;
 }): {
   headline: string;
   insufficient: boolean;
@@ -178,6 +186,7 @@ export function adjudicate(input: {
   sections: { heading: string; sentences: Sentence[] }[];
   conflicts: { topic: string; sides: { label: string; sentences: Sentence[] }[] }[];
   gaps: string[];
+  aside: string[];
   summary: VerificationSummary;
 } {
   const verdicts = new Map((input.modelVerdicts ?? []).map((verdict) => [verdict.id, verdict]));
@@ -189,6 +198,8 @@ export function adjudicate(input: {
   input.draft.lede.forEach(collectCitations);
   input.draft.sections.forEach((section) => section.sentences.forEach(collectCitations));
   input.draft.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(collectCitations)));
+  const aside: string[] = [];
+  const asideKeys = new Set<string>();
   const dropped: { text: string; reason: string }[] = [];
   const droppedKeys = new Set<string>();
   let supported = 0;
@@ -203,7 +214,15 @@ export function adjudicate(input: {
       ...sentence,
       citations: citationGroups.get(claimKey(sentence.text)) ?? sentence.citations,
     };
-    const judgement = judgeSentence(merged, input.passages, verdicts);
+    const judgement = judgeSentence(merged, input.passages, verdicts, input.question ?? "");
+    if (judgement.action === "aside") {
+      const key = sentence.text.trim().toLowerCase();
+      if (!asideKeys.has(key)) {
+        asideKeys.add(key);
+        aside.push(sentence.text);
+      }
+      return null;
+    }
     if (judgement.action === "drop") {
       if (verdicts.get(sentence.id)?.verdict === "supported" && sentence.kind === "fact") droppedOverride = true;
       const key = sentence.text.trim().toLowerCase();
@@ -279,24 +298,36 @@ export function adjudicate(input: {
     sides: conflict.sides.map((side) => ({ ...side, sentences: side.sentences.map(strip) })),
   }));
 
+  const sourced = withinSourceConflicts(input.passages, input.language ?? "en");
+  for (const conflict of sourced) {
+    if (!conflictsOut.some((existing) => existing.sides.length >= 2 && existing.topic === conflict.topic)) {
+      conflictsOut.push(conflict);
+    }
+  }
+
   const factCount = [...ledeOut, ...sectionsOut.flatMap((section) => section.sentences), ...conflictsOut.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences))]
     .filter((sentence) => sentence.kind === "fact").length;
   let insufficient = input.draft.insufficient;
+  let headline = input.draft.headline;
   if (factCount === 0) {
     insufficient = true;
-    if (!gaps.some((gap) => gap.includes("passage check"))) {
+    if (aside.length > 0) {
+      const indonesian = /^id\b|indones/i.test(input.language ?? "");
+      headline = indonesian ? "Sumber yang ada tidak menjawab ini" : "The searched pages do not answer this";
+    } else if (!gaps.some((gap) => gap.includes("passage check"))) {
       gaps.push("No factual sentence remained after the passage check.");
     }
   }
 
   const modelUsed = input.modelVerdicts !== null && input.modelError === null && input.mode === "live";
   return {
-    headline: input.draft.headline,
+    headline,
     insufficient,
     lede: ledeOut,
     sections: sectionsOut,
     conflicts: conflictsOut,
     gaps: uniqueGaps(gaps),
+    aside,
     summary: {
       checked,
       supported,
@@ -313,4 +344,43 @@ export function adjudicate(input: {
       }),
     },
   };
+}
+
+const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;
+const LOWER_RISK = /\b(menurun(?:kan)?|lower|decreas\w*|tidak meningkat(?:kan)?|tidak menaik(?:kan)?)\b/i;
+
+function withinSourceConflicts(passages: Passage[], language: string): { topic: string; sides: { label: string; sentences: Sentence[] }[] }[] {
+  const byUrl = new Map<string, Passage[]>();
+  for (const passage of passages) {
+    const key = canonicalUrl(passage.url);
+    byUrl.set(key, [...(byUrl.get(key) ?? []), passage]);
+  }
+  const indonesian = /^id\b|indones/i.test(language);
+  const conflicts: { topic: string; sides: { label: string; sentences: Sentence[] }[] }[] = [];
+  for (const group of byUrl.values()) {
+    if (group.length < 2) continue;
+    const higher = group.find((passage) => HIGHER_RISK.test(passage.text));
+    const lower = group.find((passage) => LOWER_RISK.test(passage.text) && passage.id !== higher?.id);
+    if (!higher || !lower) continue;
+    const shared = numberTokens(higher.text).some((token) => numberTokens(lower.text).includes(token));
+    if (!shared) continue;
+    const quote = (passage: Passage, pattern: RegExp) => {
+      const hit = passage.text.split(/(?<=[.!?])\s+/).find((part) => pattern.test(part)) ?? passage.text;
+      return clip(hit, 220);
+    };
+    conflicts.push({
+      topic: indonesian ? "Temuan yang berlawanan di sumber yang sama" : "The same source disagrees with itself",
+      sides: [
+        {
+          label: indonesian ? "Risiko naik" : "Higher risk",
+          sentences: [{ id: `up-${higher.id}`, text: quote(higher, HIGHER_RISK), kind: "fact", citations: [higher.id] }],
+        },
+        {
+          label: indonesian ? "Risiko turun" : "Lower risk",
+          sentences: [{ id: `down-${lower.id}`, text: quote(lower, LOWER_RISK), kind: "fact", citations: [lower.id] }],
+        },
+      ],
+    });
+  }
+  return conflicts;
 }

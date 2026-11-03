@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessSupport } from "@/lib/entailment";
-import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, readablePublisher } from "@/lib/text";
+import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, offTopicReason, readablePublisher } from "@/lib/text";
 
 const PASSAGE = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h, measured by the city's technical university on 28 October 2026.";
 
@@ -68,9 +68,17 @@ describe("assessSupport", () => {
     expect(result.level).not.toBe("unsupported");
   });
 
+  it("moves a foreign chess club out of a Bandung question", () => {
+    const question = "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?";
+    expect(offTopicReason(question, "A Facebook post said about 17 people attended a library chess club in the United States.")).toBeTruthy();
+    expect(offTopicReason(question, "Kingman and Downey public libraries host chess clubs.")).toBeTruthy();
+    expect(offTopicReason(question, "Perpustakaan Braga di Bandung mengadakan klub catur.")).toBeNull();
+  });
+
   it("turns health.detik.com into detikHealth", () => {
     expect(readablePublisher("health.detik.com")).toBe("detikHealth");
     expect(readablePublisher("Health detik")).toBe("detikHealth");
+    expect(readablePublisher("prin.or.id", "Konsumsi kopi harian | Jurnal Kedokteran Komunitas")).toBe("Jurnal Kedokteran Komunitas");
   });
 
   it("ignores digits inside a hostname", () => {

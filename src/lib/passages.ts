@@ -168,7 +168,7 @@ function makePassage(index: number, hit: SelectedHit, text: string, origin: Pass
     id: `p${index}`,
     url: hit.url,
     title: hit.title,
-    publisher: readablePublisher(hit.publisher || publisherFromUrl(hit.url)),
+    publisher: readablePublisher(hit.publisher || publisherFromUrl(hit.url), hit.title),
     publishedDate: hit.publishedDate,
     text,
     origin,

@@ -16,6 +16,7 @@ const brief: Brief = {
   sections: [],
   conflicts: [],
   gaps: ["No price is reported."],
+  aside: [],
   searched: [{ subquestion: "What range was reported?", queries: ["hamburg range"] }],
   passages: [{
     id: "p1",

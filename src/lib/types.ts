@@ -121,6 +121,7 @@ export type Brief = {
   sections: { heading: string; sentences: Sentence[] }[];
   conflicts: { topic: string; sides: { label: string; sentences: Sentence[] }[] }[];
   gaps: string[];
+  aside: string[];
   searched: { subquestion: string; queries: string[] }[];
   passages: Passage[];
   models: { primary: string; verify: string; mode: "live" | "mock" };

@@ -200,20 +200,75 @@ export function nameInText(name: string, passage: string): boolean {
 
 const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int"]);
 
-export function readablePublisher(name: string): string {
+const COMPOUND_SUFFIXES = [".or.id", ".ac.id", ".co.id", ".go.id", ".sch.id", ".web.id", ".my.id", ".biz.id", ".co.uk"];
+
+function publicationName(title?: string): string | null {
+  if (!title) return null;
+  const parts = title.split(/\s+[|–—]\s+|\s+-\s+/).map((part) => part.trim()).filter((part) => part.length >= 4 && part.length <= 80);
+  if (parts.length === 0) return null;
+  const last = parts[parts.length - 1] ?? "";
+  return last.length <= 60 ? last : (parts[0] ?? "").slice(0, 60);
+}
+
+function isWeakPublisher(name: string): boolean {
+  const tokens = name.toLowerCase().split(/[\s.]+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  if (tokens.length === 1 && tokens[0]!.length <= 5) return true;
+  return tokens.every((token) => token.length <= 3);
+}
+
+export function readablePublisher(name: string, title?: string): string {
   const trimmed = name.trim();
   if (/^health\s+detik$/i.test(trimmed)) return "detikHealth";
-  const host = trimmed.replace(/^www\./i, "");
-  if (!host.includes(".")) return trimmed;
+  const fromTitle = publicationName(title);
+  if (!trimmed.includes(".") && !trimmed.includes("://")) {
+    return isWeakPublisher(trimmed) && fromTitle ? fromTitle : trimmed;
+  }
+  let host = trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0] ?? trimmed;
+  const lowerHost = host.toLowerCase();
+  for (const suffix of COMPOUND_SUFFIXES) {
+    if (lowerHost.endsWith(suffix)) {
+      host = host.slice(0, -suffix.length);
+      break;
+    }
+  }
   const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label.toLowerCase()) && !/^www\d*$/i.test(label));
-  if (labels.length === 0) return trimmed;
   if (labels[labels.length - 1]?.toLowerCase() === "detik") {
     const section = (labels[labels.length - 2] ?? "").replace(/\d+$/g, "");
     if (!section) return "detik";
     return `detik${section.charAt(0).toUpperCase()}${section.slice(1)}`;
   }
-  const words = labels.map((label) => label.replace(/\d+$/g, "")).filter(Boolean);
-  return words.length > 0 ? words.join(" ") : trimmed;
+  const derived = labels.map((label) => label.replace(/\d+$/g, "")).filter(Boolean).join(" ");
+  if (derived && !isWeakPublisher(derived)) return derived;
+  return fromTitle || derived || trimmed;
+}
+
+const REGIONS: string[][] = [
+  ["united states", "u.s.", "usa", "amerika", "america", "kingman", "downey", "arizona", "california", "facebook"],
+  ["indonesia", "bandung", "jakarta", "braga", "jawa", "bali", "surabaya", "yogyakarta"],
+  ["iberia", "iberian", "spain", "spanish", "portugal", "portuguese", "caceres", "alentejo", "extremadura", "madrid"],
+  ["germany", "german", "hamburg", "berlin"],
+];
+
+function regionsIn(text: string): Set<number> {
+  const haystack = text.toLowerCase();
+  const found = new Set<number>();
+  REGIONS.forEach((names, index) => {
+    if (names.some((name) => haystack.includes(name))) found.add(index);
+  });
+  return found;
+}
+
+/** A supported sentence about a different place than the question asks about. */
+export function offTopicReason(question: string, sentence: string): string | null {
+  const wanted = regionsIn(question);
+  if (wanted.size === 0) return null;
+  const mentioned = regionsIn(sentence);
+  if (mentioned.size === 0) return null;
+  for (const region of mentioned) {
+    if (wanted.has(region)) return null;
+  }
+  return "The sentence is about a different place than the question.";
 }
 
 export type BriefLabels = {
@@ -230,6 +285,10 @@ export type BriefLabels = {
   check: string;
   struck: string;
   notRun: string;
+  instead: string;
+  copy: string;
+  download: string;
+  copied: string;
 };
 
 export function briefLabels(language: string): BriefLabels {
@@ -248,6 +307,10 @@ export function briefLabels(language: string): BriefLabels {
       check: "Periksa",
       struck: "Dicoret",
       notRun: "Tidak dijalankan",
+      instead: "Yang ditemukan sebagai gantinya",
+      copy: "Salin Markdown",
+      download: "Unduh",
+      copied: "Tersalin",
     };
   }
   return {
@@ -264,7 +327,25 @@ export function briefLabels(language: string): BriefLabels {
     check: "Check",
     struck: "Struck",
     notRun: "Not run",
+    instead: "What we found instead",
+    copy: "Copy Markdown",
+    download: "Download",
+    copied: "Copied",
   };
+}
+
+export function trailPhaseLabel(language: string, phase: string): string {
+  const indonesian = /^id\b|indones/i.test(language);
+  const labels: Record<string, string> = indonesian
+    ? { plan: "Rencana", search: "Cari", read: "Baca", write: "Tulis", verify: "Periksa", gap: "Celah", done: "Selesai" }
+    : { plan: "Plan", search: "Search", read: "Read", write: "Write", verify: "Verify", gap: "Gap", done: "Done" };
+  return labels[phase] ?? phase;
+}
+
+export function recencyDetail(language: string, recent: boolean): string {
+  const indonesian = /^id\b|indones/i.test(language);
+  if (recent) return indonesian ? "Sumber terbaru diutamakan." : "Recent sources preferred.";
+  return indonesian ? "Baris ini tidak memakai saringan waktu." : "No recency filter on this line.";
 }
 
 export function hasWord(haystack: string, word: string): boolean {
