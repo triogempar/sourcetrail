@@ -36,6 +36,22 @@ export function isSiteStat(text: string): boolean {
   return SITE_STAT.test(text);
 }
 
+const NAV_LINE = /^(?:home|menu|search|subscribe|sign in|log in|skip to (?:content|main|navigation)|share(?: this)?|advertisement|sections|follow us|related coverage|cookie settings)\b/i;
+
+export function stripSiteNav(text: string): string {
+  return text
+    .split(/\n+/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (trimmed.length < 90 && (trimmed.match(/[|/]/g)?.length ?? 0) >= 4) return false;
+      if (trimmed.length < 80 && NAV_LINE.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
 export function isBoilerplate(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 40) return false;
@@ -80,7 +96,7 @@ function renderTableLine(line: string): string | null | undefined {
 }
 
 export function passagesFromDocument(raw: string, query: string): string[] {
-  const text = flattenMarkdownTables(raw).trim();
+  const text = stripSiteNav(flattenMarkdownTables(raw)).trim();
   if (text.length < 40) return [];
   const parts = text
     .split(/\n{2,}|\[\s*\.\.\.\s*\]/g)
@@ -136,7 +152,7 @@ export function buildPassages(input: {
       });
       continue;
     }
-    const snippet = flattenMarkdownTables(hit.content).trim();
+    const snippet = stripSiteNav(flattenMarkdownTables(hit.content)).trim();
     if (isBoilerplate(snippet) || (document && isBoilerplate(document.rawContent) && isBoilerplate(snippet))) {
       notes.push({
         url: hit.url,

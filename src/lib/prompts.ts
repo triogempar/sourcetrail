@@ -58,7 +58,7 @@ export function writePrompt(input: {
       "The headline is a finished phrase in the question language. Do not end it with an ellipsis or a cut-off word.",
       "Do not repeat a sentence in a later section.",
       "kind inference is a conclusion the passages support without stating it in those words. An inference must not add numbers, dates, or names absent from the passages.",
-      "If two passages make incompatible claims, put both in conflicts and do not pick a winner.",
+      "If two passages point in opposite directions on the same claim, put both in conflicts and do not pick a winner. Do not open a conflict when they agree who leads, or whether there is an effect, and differ only in the size of the margin or the population. Write one sentence instead, for example 'Polls put the lead between 7 and 11 points.'",
       "A fact that is true but about a different place, institution, or population does not answer the question. Leave it out of lede and sections. If nothing answers the question, set insufficient true.",
       "If two chunks of the same source disagree, put both in conflicts.",
       "If the passages do not answer the question, set insufficient true, leave sections empty, and list the gap. Do not add a section of off-topic pages.",

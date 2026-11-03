@@ -1030,7 +1030,7 @@ describe("adjudicate", () => {
     const side = result.conflicts.flatMap((conflict) => conflict.sides).find((item) => item.label === "Finds little difference");
     expect(side?.sentences[0]?.text).toMatch(/little difference/i);
     expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
-    expect(result.headline).toBe("Bukti beragam soal weight loss");
+    expect(result.headline).toBe("Bukti beragam soal Weight loss");
   });
 
   it("keeps a 9-point edge that is stated in the page title", () => {
@@ -1101,5 +1101,53 @@ describe("adjudicate", () => {
     const kept = result.lede.find((sentence) => /none of the sources/i.test(sentence.text));
     expect(kept?.flag).toBeUndefined();
     expect(result.summary.dropped).toBe(0);
+  });
+
+  it("writes a range instead of a disagreement when polls agree who leads", () => {
+    const nyt = "NYT/Siena found Democrats ahead by 11 points among likely voters.";
+    const nbc = "NBC found Democrats ahead by 7 points among registered voters.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.nytimes.com/siena",
+      title: "NYT/Siena",
+      publisher: "New York Times",
+      publishedDate: null,
+      origin: "extract",
+      text: nyt,
+    }, {
+      id: "p2",
+      url: "https://www.nbcnews.com/poll",
+      title: "NBC poll",
+      publisher: "NBC News",
+      publishedDate: null,
+      origin: "extract",
+      text: nbc,
+    }];
+    const draft = tagDraft({
+      headline: "Mixed evidence on democratic ballot lead size",
+      insufficient: false,
+      lede: [{ text: nyt, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "NBC", sentences: [{ text: nbc, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Democratic ballot lead size",
+        sides: [
+          { label: "NYT/Siena", sentences: [{ text: nyt, kind: "fact", citations: ["p1"] }] },
+          { label: "NBC", sentences: [{ text: nbc, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: ["Polls are snapshots, not a forecast of the result."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "How large is the Democratic ballot lead?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/between 7 and 11 points/);
+    expect(result.headline).not.toMatch(/mixed evidence/i);
+    expect(result.headline.charAt(0)).toBe(result.headline.charAt(0).toUpperCase());
   });
 });

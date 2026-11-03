@@ -147,6 +147,10 @@ const SLUG_BRANDS: Record<string, string> = {
   veeva: "Veeva",
   heart: "American Heart Association",
   nbcnews: "NBC News",
+  ithy: "Ithy",
+  medicalxpress: "Medical Xpress",
+  sciencedirect: "ScienceDirect",
+  mychess: "MyChess Events",
 };
 
 export function naturalizeSentence(text: string): string {
@@ -233,7 +237,7 @@ export function nameInText(name: string, passage: string): boolean {
   return folded.length >= 8 && foldName(passage).includes(folded);
 }
 
-const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int"]);
+const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int", "tw", "events"]);
 
 function isWeakPublisher(name: string): boolean {
   const tokens = name.toLowerCase().split(/[\s.]+/).filter(Boolean);
@@ -393,7 +397,9 @@ function fallbackBrand(raw: string): string | null {
     const known = knownBrand(label);
     if (known) return known;
   }
-  const core = labels[labels.length - 1] ?? "";
+  const generic = new Set(["events", "tw", "www", "mail", "mobile", "blog", "cdn", "static", "media", "online", "web", "site", "app", "amp", "edition", "en"]);
+  const specific = labels.filter((label) => !generic.has(label) && label.length > 2);
+  const core = specific.sort((a, b) => b.length - a.length)[0] ?? labels.find((label) => label.length > 2) ?? "";
   if (core.length < 2) return null;
   return presentLabel(core);
 }

@@ -365,6 +365,18 @@ export function adjudicate(input: {
       conflictsOut.push(conflict);
     }
   }
+  const aligned: Sentence[] = [];
+  conflictsOut = conflictsOut.filter((conflict) => {
+    if (weakDisagreement(conflict.sides) || sameDirection(conflict.sides)) {
+      const range = leadRangeSentence(conflict.sides, input.language ?? "en");
+      if (range) aligned.push(range);
+      return false;
+    }
+    return true;
+  });
+  for (const sentence of aligned) {
+    if (!ledeOut.some((kept) => claimKey(kept.text) === claimKey(sentence.text))) ledeOut.push(sentence);
+  }
   const bodyText = [
     ...ledeOut,
     ...sectionsOut.flatMap((section) => section.sentences),
@@ -375,7 +387,7 @@ export function adjudicate(input: {
       ...side,
       sentences: side.sentences.map((sentence) => ({ ...sentence, text: concisePosition(sentence.text, bodyText, side.label) })),
     })),
-  })).filter((conflict) => !weakDisagreement(conflict.sides));
+  }));
 
   const keptSentences = [
     ...ledeOut,
@@ -411,6 +423,10 @@ export function adjudicate(input: {
   if (!disputed) {
     const cleanedHeadline = stripMixedClause(headline);
     if (cleanedHeadline.length >= 12) headline = cleanedHeadline;
+    else if (/mixed evidence|bukti beragam/i.test(headline)) {
+      const range = ledeOut.find((sentence) => /between \d+|antara \d+/i.test(sentence.text));
+      headline = (range?.text ?? ledeOut[0]?.text ?? "Research brief").replace(/\.$/, "");
+    }
     const cleanProse = (sentence: Sentence): Sentence => {
       const text = stripMixedClause(sentence.text);
       return text.length >= 12 ? { ...sentence, text } : sentence;
@@ -458,6 +474,7 @@ function softenConflictHeadline(headline: string, language: string, hasTwoSidedC
 
 function stripMixedClause(text: string): string {
   return text
+    .replace(/^(?:mixed evidence on|bukti beragam soal)\b.*$/i, "")
     .replace(/,?\s*(?:though|although|but|while|meski(?:pun)?|walau(?:pun)?|namun)\s+(?:the\s+)?(?:evidence|bukti)(?:nya)?\s+(?:is\s+|saling\s+)?(?:mixed|beragam|bertentangan|does not agree|tidak sepakat)\b/gi, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s+([,.;])/g, "$1")
@@ -480,7 +497,7 @@ function topicPhrase(question: string, conflicts: { topic: string; sides: { sent
 
 function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean, topic: string): string {
   if (!hasTwoSidedConflict || !topic || CONFLICT_HEADLINE.test(headline) || /beragam|mixed evidence|do not agree|tidak sepakat/i.test(headline)) return headline;
-  const phrase = `${topic.charAt(0).toLowerCase()}${topic.slice(1)}`;
+  const phrase = `${topic.charAt(0).toUpperCase()}${topic.slice(1)}`;
   return /^id\b|indones/i.test(language) ? `Bukti beragam soal ${phrase}` : `Mixed evidence on ${phrase}`;
 }
 
@@ -498,6 +515,57 @@ function claimKind(text: string): "opinion" | "market" | "other" {
 function weakDisagreement(sides: { sentences: { text: string }[] }[]): boolean {
   const kinds = sides.map((side) => claimKind(side.sentences.map((sentence) => sentence.text).join(" ")));
   return kinds.includes("opinion") && kinds.includes("market");
+}
+
+function sideText(side: { sentences: { text: string }[] }): string {
+  return side.sentences.map((sentence) => sentence.text).join(" ");
+}
+
+function polarity(text: string): "dem" | "rep" | "up" | "down" | "both" | "unknown" {
+  const up = /\b(higher|increase[sd]?|greater|raises|raising|meningkat|lebih tinggi|lebih besar)\b/i.test(text);
+  const down = /\b(lower|decrease|reduced|no significant|little difference|no difference|tidak berbeda|menurun|lebih rendah|tidak signifikan)\b/i.test(text);
+  if (up && down) return "both";
+  if (up) return "up";
+  if (down) return "down";
+  const dem = /\bdemocrat/i.test(text);
+  const rep = /\brepublican/i.test(text);
+  const margin = /\b\d+(?:\.\d+)?\s*-?\s*points?\b|\+\s*\d/i.test(text);
+  const ahead = /\b(lead|ahead|edge|leading|holding)\b/i.test(text);
+  if (dem && !rep && (ahead || margin)) return "dem";
+  if (rep && !dem && (ahead || margin)) return "rep";
+  if (dem && rep && /\bdemocrat\w*[^.]{0,50}\b(ahead|lead|edge|holding)\b/i.test(text)) return "dem";
+  if (dem && rep && /\brepublican\w*[^.]{0,50}\b(ahead|lead|edge|holding)\b/i.test(text)) return "rep";
+  return "unknown";
+}
+
+function sameDirection(sides: { sentences: { text: string }[] }[]): boolean {
+  const directions = sides.map((side) => polarity(sideText(side)));
+  if (directions.length < 2 || directions.some((direction) => direction === "unknown" || direction === "both")) return false;
+  return new Set(directions).size === 1;
+}
+
+function leadMagnitude(text: string): number | null {
+  const match = text.match(/\b(\d+(?:\.\d+)?)\s*-?\s*points?\b/i) ?? text.match(/\+\s*(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function leadRangeSentence(sides: { sentences: Sentence[] }[], language: string): Sentence | null {
+  const magnitudes = sides.map((side) => leadMagnitude(sideText(side))).filter((value): value is number => value !== null);
+  if (new Set(magnitudes).size < 2) return null;
+  const low = Math.min(...magnitudes);
+  const high = Math.max(...magnitudes);
+  const indonesian = /^id\b|indones/i.test(language);
+  const citations = [...new Set(sides.flatMap((side) => side.sentences.flatMap((sentence) => sentence.citations)))];
+  return {
+    id: "range-lead",
+    text: indonesian
+      ? `Jajak pendapat menempatkan keunggulan antara ${low} dan ${high} poin.`
+      : `Polls put the lead between ${low} and ${high} points.`,
+    kind: "fact",
+    citations,
+  };
 }
 
 function headlineFollowsRemoved(headline: string, removed: string[]): boolean {
@@ -604,9 +672,20 @@ function concisePosition(text: string, body: string[], label = ""): string {
     if (keepsEveryFigure(picked.join(", and "), cleaned)) break;
   }
   const joined = picked.join(", and ").trim();
-  if (!joined || !keepsEveryFigure(joined, cleaned) || (label && !labelAgrees(label, joined))) return cleaned;
+  if (!joined || !keepsEveryFigure(joined, cleaned) || (label && !labelAgrees(label, joined)) || claimKey(joined) === claimKey(cleaned)) {
+    return compactRepeat(cleaned, label);
+  }
   const sentence = `${joined.charAt(0).toUpperCase()}${joined.slice(1)}`;
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+function compactRepeat(text: string, label: string): string {
+  const figures = [...new Set(text.match(/\d+(?:\.\d+)?%?/g) ?? [])];
+  if (label && figures.length > 0) {
+    const line = `${label}: ${figures.join(" and ")}.`;
+    if (claimKey(line) !== claimKey(text)) return line;
+  }
+  return text;
 }
 
 const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;

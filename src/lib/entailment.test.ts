@@ -107,6 +107,11 @@ describe("assessSupport", () => {
     expect(readablePublisher("www.heart.org")).toBe("American Heart Association");
     expect(readablePublisher("nbcnews.com")).toBe("NBC News");
     expect(readablePublisher("Tavily", "Senate poll", "https://www.nbcnews.com/politics/senate")).toBe("NBC News");
+    expect(readablePublisher("ithy.com")).toBe("Ithy");
+    expect(readablePublisher("medicalxpress.com")).toBe("Medical Xpress");
+    expect(readablePublisher("sciencedirect.com")).toBe("ScienceDirect");
+    expect(readablePublisher("mychess.events")).toBe("MyChess Events");
+    expect(readablePublisher("example.tw")).toBe("Example");
     expect(planFrameDetail("id", 4)).toBe("4 jalur pertanyaan. Bahasa: id.");
   });
 
