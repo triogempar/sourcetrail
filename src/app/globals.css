@@ -494,7 +494,7 @@ button, .text-button {
 
 .instead { background: transparent; }
 
-.gaps ul, .verification ul, .source-index ul, .struck {
+.gaps ul, .instead ul, .verification ul, .source-index ul, .struck {
   margin: 0.4rem 0 0;
   padding-left: 1.1rem;
 }

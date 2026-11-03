@@ -82,7 +82,9 @@ describe("adjudicate", () => {
       mode: "live",
       modelError: null,
     });
-    expect(result.lede).toHaveLength(0);
+    expect(result.lede.some((sentence) => sentence.text.includes("40"))).toBe(false);
+    expect(result.lede[0]?.citations).toContain("p1");
+    expect(result.gaps.join(" ")).not.toMatch(/passage check/i);
     expect(result.summary.droppedSentences.some((sentence) => sentence.reason.includes("40%"))).toBe(true);
   });
 
@@ -153,8 +155,10 @@ describe("adjudicate", () => {
       mode: "live",
       modelError: null,
     });
-    expect(result.lede).toHaveLength(0);
+    expect(result.lede.some((sentence) => sentence.text.includes("40"))).toBe(false);
+    expect(result.lede[0]?.citations.length).toBeGreaterThan(0);
     expect(result.insufficient).toBe(true);
+    expect(result.gaps.join(" ")).not.toMatch(/passage check/i);
   });
 
   it("does not present a one-sided conflict as a dispute", () => {
@@ -282,10 +286,16 @@ describe("adjudicate", () => {
       language: "id",
       question: "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?",
     });
-    expect(result.lede).toHaveLength(0);
-    expect(result.aside.join(" ")).toMatch(/17/);
+    expect(result.lede.some((sentence) => sentence.text.includes("17"))).toBe(false);
+    expect(result.lede[0]?.citations).toContain("p1");
+    expect(result.lede[0]?.text).toMatch(/Facebook|Chess night/i);
+    expect(result.aside).toHaveLength(1);
+    expect(result.aside[0]?.text).toMatch(/17/);
+    expect(result.aside[0]?.citations).toContain("p1");
     expect(result.insufficient).toBe(true);
     expect(result.headline).toMatch(/tidak menjawab/i);
+    expect(result.gaps.join(" ")).not.toMatch(/passage check|factual sentence remained/i);
+    expect(result.gaps.join(" ")).toMatch(/halaman terdekat/i);
   });
 
   it("moves a supported sentence the model marks irrelevant", () => {
@@ -318,8 +328,9 @@ describe("adjudicate", () => {
       modelError: null,
       question: "How many people attend the chess club at the Braga library in Bandung?",
     });
-    expect(result.lede).toHaveLength(0);
-    expect(result.aside[0]).toMatch(/40 people/);
+    expect(result.lede.some((sentence) => /40 people/.test(sentence.text))).toBe(false);
+    expect(result.aside[0]?.text).toMatch(/40 people/);
+    expect(result.aside[0]?.citations).toContain("p1");
   });
 
   it("shows both risk findings from two chunks of one journal", () => {
@@ -367,5 +378,181 @@ describe("adjudicate", () => {
     expect(result.conflicts).toHaveLength(1);
     expect(result.conflicts[0]?.sides).toHaveLength(2);
     expect(result.conflicts[0]?.topic).toMatch(/berlawanan/i);
+    const sideText = result.conflicts[0]?.sides.map((side) => side.sentences.map((sentence) => sentence.text).join(" ")).join(" ") ?? "";
+    expect(sideText).not.toMatch(/Shah et al/);
+    expect(sideText).not.toContain("dapat meningkatkan faktor risiko hipertensi");
+    expect(sideText).toMatch(/lebih tinggi/);
+    expect(sideText).toMatch(/lebih rendah/);
+  });
+
+  it("keeps a publisher named only in the title or URL", () => {
+    const pages: Passage[] = [{
+      id: "p3",
+      url: "https://repository.undip.ac.id/kopi",
+      title: "Jurnal LPPM Stikesfa",
+      publisher: "Repositori Undip",
+      publishedDate: null,
+      origin: "extract",
+      text: "Risiko hipertensi sekitar 4 kali lebih tinggi pada kelompok tersebut.",
+    }];
+    const draft = tagDraft({
+      headline: "Risiko sekitar empat kali lipat",
+      insufficient: false,
+      lede: [{
+        text: "Jurnal LPPM Stikesfa dan Repositori Undip melaporkan risiko sekitar 4 kali lebih tinggi.",
+        kind: "fact",
+        citations: ["p3"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kali kopi menaikkan risiko hipertensi?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/LPPM Stikesfa/);
+    expect(result.lede[0]?.citations).toContain("p3");
+  });
+
+  it("softens a disagreement headline when the opposing side is gone", () => {
+    const pages: Passage[] = [{
+      id: "p8",
+      url: "https://prin.or.id/kopi-naik",
+      title: "Kopi",
+      publisher: "Jurnal",
+      publishedDate: null,
+      origin: "extract",
+      text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+    }];
+    const kept = "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.";
+    const draft = tagDraft({
+      headline: "Bukti saling bertentangan soal kopi",
+      insufficient: false,
+      lede: [{ text: kept, kind: "fact", citations: ["p8"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko",
+        sides: [
+          { label: "Naik", sentences: [{ text: kept, kind: "fact", citations: ["p8"] }] },
+          { label: "Turun", sentences: [{ text: "Risiko turun 40 persen pada semua orang.", kind: "fact", citations: ["p8"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah kopi menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.headline).not.toMatch(/bertentangan/i);
+    expect(result.headline).toMatch(/tidak menetapkan/i);
+    expect(result.lede.map((sentence) => sentence.text)).toContain(kept);
+  });
+
+  it("keeps the disagree box when retained passages still conflict", () => {
+    const journal: Passage[] = [
+      {
+        id: "p7",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Shah et al. found that more than 2 cups a day were linked to a lower risk of hypertension.",
+      },
+      {
+        id: "p8",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Bukti saling bertentangan soal kopi",
+      insufficient: false,
+      lede: [{
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+        kind: "fact",
+        citations: ["p8"],
+      }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko",
+        sides: [
+          {
+            label: "Naik",
+            sentences: [{
+              text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+              kind: "fact",
+              citations: ["p8"],
+            }],
+          },
+          {
+            label: "Turun",
+            sentences: [{ text: "Risiko turun 40 persen pada semua orang.", kind: "fact", citations: ["p8"] }],
+          },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: journal,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah lebih dari 2 cangkir kopi sehari menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts.some((conflict) => conflict.sides.length >= 2)).toBe(true);
+    expect(result.headline).toMatch(/bertentangan/i);
+  });
+
+  it("keeps an on-topic adherence sentence, with its citation, in the answer", () => {
+    const pages: Passage[] = [{
+      id: "p6",
+      url: "https://ithy.com/kopi",
+      title: "Pola 4:3",
+      publisher: "Ithy",
+      publishedDate: null,
+      origin: "extract",
+      text: "Ithy menulis bahwa keunggulan pola 4:3 mungkin berasal dari kepatuhan pada konsumsi kopi dan risiko hipertensi.",
+    }];
+    const claim = "Ithy menulis bahwa keunggulan pola 4:3 mungkin berasal dari kepatuhan.";
+    const draft = tagDraft({
+      headline: "Pola 4:3 mungkin unggul karena kepatuhan",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p6"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "adherence aside" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah konsumsi kopi rutin menurunkan risiko hipertensi?",
+    });
+    const kept = result.lede.find((sentence) => sentence.text.includes("4:3"));
+    expect(kept?.citations).toContain("p6");
+    expect(result.aside.some((sentence) => sentence.text.includes("4:3"))).toBe(false);
   });
 });

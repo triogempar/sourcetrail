@@ -202,14 +202,6 @@ const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "
 
 const COMPOUND_SUFFIXES = [".or.id", ".ac.id", ".co.id", ".go.id", ".sch.id", ".web.id", ".my.id", ".biz.id", ".co.uk"];
 
-function publicationName(title?: string): string | null {
-  if (!title) return null;
-  const parts = title.split(/\s+[|–—]\s+|\s+-\s+/).map((part) => part.trim()).filter((part) => part.length >= 4 && part.length <= 80);
-  if (parts.length === 0) return null;
-  const last = parts[parts.length - 1] ?? "";
-  return last.length <= 60 ? last : (parts[0] ?? "").slice(0, 60);
-}
-
 function isWeakPublisher(name: string): boolean {
   const tokens = name.toLowerCase().split(/[\s.]+/).filter(Boolean);
   if (tokens.length === 0) return true;
@@ -217,14 +209,36 @@ function isWeakPublisher(name: string): boolean {
   return tokens.every((token) => token.length <= 3);
 }
 
-export function readablePublisher(name: string, title?: string): string {
-  const trimmed = name.trim();
-  if (/^health\s+detik$/i.test(trimmed)) return "detikHealth";
-  const fromTitle = publicationName(title);
-  if (!trimmed.includes(".") && !trimmed.includes("://")) {
-    return isWeakPublisher(trimmed) && fromTitle ? fromTitle : trimmed;
-  }
-  let host = trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0] ?? trimmed;
+function looksTruncated(text: string): boolean {
+  return /[…\u2026]|\.{3}/.test(text);
+}
+
+function looksLikeArticle(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || looksTruncated(trimmed)) return true;
+  if (trimmed.length > 48) return true;
+  return /^(pengaruh|the effect|the impact|studi |analisis |hubungan |dampak |effect of |association )/i.test(trimmed);
+}
+
+function publicationName(title?: string): string | null {
+  if (!title || looksTruncated(title)) return null;
+  const parts = title.split(/\s+[|–—]\s+|\s+-\s+/).map((part) => part.trim()).filter((part) => part.length >= 4 && part.length <= 60);
+  if (parts.length === 0) return null;
+  const last = parts[parts.length - 1] ?? "";
+  if (!last || looksLikeArticle(last) || last.length > 40) return null;
+  return last;
+}
+
+const GENERIC_HOST_LABELS = new Set([
+  "ejournal", "journal", "journals", "jurnal", "repo", "repository", "repositori",
+  "ojs", "online", "web", "blog", "news", "docs", "sites", "site", "mail",
+]);
+
+function hostBrand(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  let host = trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0] ?? "";
+  if (!host.includes(".")) return "";
   const lowerHost = host.toLowerCase();
   for (const suffix of COMPOUND_SUFFIXES) {
     if (lowerHost.endsWith(suffix)) {
@@ -238,9 +252,28 @@ export function readablePublisher(name: string, title?: string): string {
     if (!section) return "detik";
     return `detik${section.charAt(0).toUpperCase()}${section.slice(1)}`;
   }
-  const derived = labels.map((label) => label.replace(/\d+$/g, "")).filter(Boolean).join(" ");
-  if (derived && !isWeakPublisher(derived)) return derived;
-  return fromTitle || derived || trimmed;
+  const specific = labels
+    .map((label) => label.replace(/\d+$/g, ""))
+    .filter((label) => label && !GENERIC_HOST_LABELS.has(label.toLowerCase()));
+  const chosen = specific.length > 0 ? specific[specific.length - 1] ?? "" : labels[labels.length - 1] ?? "";
+  if (!chosen) return "";
+  return `${chosen.charAt(0).toUpperCase()}${chosen.slice(1)}`;
+}
+
+export function readablePublisher(name: string, title?: string, url?: string): string {
+  const trimmed = name.trim();
+  if (/^health\s+detik$/i.test(trimmed) || /^detik\s+health$/i.test(trimmed)) return "detikHealth";
+  const fromUrl = url ? hostBrand(url) : "";
+  const fromName = trimmed.includes(".") || trimmed.includes("://") ? hostBrand(trimmed) : "";
+  const brand = (fromUrl && !isWeakPublisher(fromUrl) ? fromUrl : "") || (fromName && !isWeakPublisher(fromName) ? fromName : "") || fromUrl || fromName;
+  if (brand && !isWeakPublisher(brand)) return brand;
+  const plainName = !trimmed.includes(".") && !trimmed.includes("://") && !looksLikeArticle(trimmed) && !isWeakPublisher(trimmed);
+  if (plainName) return trimmed;
+  const journal = publicationName(title);
+  if (journal) return journal;
+  if (brand) return brand;
+  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !trimmed.includes("://")) return trimmed;
+  return brand || "Source";
 }
 
 const REGIONS: string[][] = [
@@ -257,6 +290,20 @@ function regionsIn(text: string): Set<number> {
     if (names.some((name) => haystack.includes(name))) found.add(index);
   });
   return found;
+}
+
+const PLACE_WORDS = new Set(
+  REGIONS.flatMap((names) => names.flatMap((name) => name.toLowerCase().split(/[\s.]+/).filter((part) => part.length >= 4))),
+);
+
+/** Shared subject words, ignoring place names. Two or more means the sentence is on the question. */
+export function subjectOverlap(question: string, text: string): number {
+  const wanted = new Set(contentWords(question).filter((word) => !PLACE_WORDS.has(word)));
+  const found = new Set<string>();
+  for (const word of contentWords(text)) {
+    if (wanted.has(word)) found.add(word);
+  }
+  return found.size;
 }
 
 /** A supported sentence about a different place than the question asks about. */

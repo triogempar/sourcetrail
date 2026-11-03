@@ -1,6 +1,6 @@
 import { assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
-import { canonicalUrl, cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, uniqueGaps } from "@/lib/text";
+import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, subjectOverlap, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -82,6 +82,15 @@ function evidenceTexts(citations: string[], passages: Passage[]): string[] {
     .filter((text): text is string => Boolean(text));
 }
 
+function sourceMetadata(passages: Passage[]): string {
+  return passages.map((passage) => {
+    const site = `${passage.publisher} ${passage.title} ${passage.url}`
+      .replace(/repository/gi, "repository repositori")
+      .replace(/\bjournals?\b/gi, "journal jurnal");
+    return site;
+  }).join("\n");
+}
+
 function claimKey(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}.+%]+/gu, " ").replace(/\s+/g, " ").trim();
 }
@@ -117,10 +126,13 @@ function judgeSentence(
       model,
     );
   }
-  const support = assessSupport(sentence.text, cited);
+  const support = assessSupport(sentence.text, cited, sourceMetadata(passages));
   const localOff = question ? offTopicReason(question, sentence.text) : null;
   const modelOff = verdicts.get(sentence.id)?.relevant === false;
-  const offTopic = Boolean(localOff) || modelOff;
+  const onSubject = question
+    ? subjectOverlap(question, sentence.text) >= 2 || subjectOverlap(question, cited.join("\n")) >= 2
+    : false;
+  const offTopic = Boolean(localOff) || (modelOff && !onSubject);
   if (offTopic && (support.level !== "unsupported" || model === "supported")) {
     return { action: "aside", reason: localOff ?? "The sentence does not answer this question's place or subject." };
   }
@@ -186,7 +198,7 @@ export function adjudicate(input: {
   sections: { heading: string; sentences: Sentence[] }[];
   conflicts: { topic: string; sides: { label: string; sentences: Sentence[] }[] }[];
   gaps: string[];
-  aside: string[];
+  aside: Sentence[];
   summary: VerificationSummary;
 } {
   const verdicts = new Map((input.modelVerdicts ?? []).map((verdict) => [verdict.id, verdict]));
@@ -198,7 +210,7 @@ export function adjudicate(input: {
   input.draft.lede.forEach(collectCitations);
   input.draft.sections.forEach((section) => section.sentences.forEach(collectCitations));
   input.draft.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(collectCitations)));
-  const aside: string[] = [];
+  const aside: Sentence[] = [];
   const asideKeys = new Set<string>();
   const dropped: { text: string; reason: string }[] = [];
   const droppedKeys = new Set<string>();
@@ -219,7 +231,7 @@ export function adjudicate(input: {
       const key = sentence.text.trim().toLowerCase();
       if (!asideKeys.has(key)) {
         asideKeys.add(key);
-        aside.push(sentence.text);
+        aside.push(toSentence(merged, input.passages));
       }
       return null;
     }
@@ -305,17 +317,25 @@ export function adjudicate(input: {
     }
   }
 
-  const factCount = [...ledeOut, ...sectionsOut.flatMap((section) => section.sentences), ...conflictsOut.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences))]
-    .filter((sentence) => sentence.kind === "fact").length;
+  const keptSentences = [
+    ...ledeOut,
+    ...sectionsOut.flatMap((section) => section.sentences),
+    ...conflictsOut.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences)),
+  ];
   let insufficient = input.draft.insufficient;
-  let headline = input.draft.headline;
-  if (factCount === 0) {
+  let headline = softenConflictHeadline(input.draft.headline, input.language ?? "en", conflictsOut.some((conflict) => conflict.sides.length >= 2));
+  if (keptSentences.length === 0) {
     insufficient = true;
-    if (aside.length > 0) {
+    gaps.splice(0, gaps.length, ...gaps.filter((gap) => !/passage check|factual sentence remained/i.test(gap)));
+    if (input.passages.length > 0) {
       const indonesian = /^id\b|indones/i.test(input.language ?? "");
       headline = indonesian ? "Sumber yang ada tidak menjawab ini" : "The searched pages do not answer this";
-    } else if (!gaps.some((gap) => gap.includes("passage check"))) {
-      gaps.push("No factual sentence remained after the passage check.");
+      const nearest = nearestFinding(input.question ?? "", input.passages, input.language ?? "en");
+      if (nearest) ledeOut.push(nearest);
+      const gap = indonesian
+        ? "Sumber yang tersimpan tidak mencakup jawaban langsung. Kalimat di atas hanya menunjuk halaman terdekat."
+        : "The stored pages do not directly answer the question. The sentence above only points to the nearest page.";
+      if (!gaps.some((item) => /halaman terdekat|nearest page/i.test(item))) gaps.push(gap);
     }
   }
 
@@ -346,6 +366,36 @@ export function adjudicate(input: {
   };
 }
 
+const CONFLICT_HEADLINE = /bertentangan|tidak sepakat|kontradik|disagree|conflict/i;
+
+function softenConflictHeadline(headline: string, language: string, hasTwoSidedConflict: boolean): string {
+  if (hasTwoSidedConflict || !CONFLICT_HEADLINE.test(headline)) return headline;
+  return /^id\b|indones/i.test(language)
+    ? "Sumber yang ada tidak menetapkan satu jawaban"
+    : "The stored pages do not settle one answer";
+}
+
+function nearestFinding(question: string, passages: Passage[], language: string): Sentence | null {
+  if (passages.length === 0) return null;
+  const wanted = new Set(question ? contentWords(question) : []);
+  let best = passages[0]!;
+  let bestScore = -1;
+  for (const passage of passages) {
+    const score = contentWords(`${passage.title} ${passage.text}`).filter((word) => wanted.has(word)).length;
+    if (score > bestScore) {
+      best = passage;
+      bestScore = score;
+    }
+  }
+  const indonesian = /^id\b|indones/i.test(language);
+  const name = best.publisher.trim() || (indonesian ? "Sumber" : "The stored page");
+  const about = clip(best.title.trim() || (indonesian ? "halaman tersimpan" : "a stored page"), 72);
+  const text = indonesian
+    ? `${name} membahas “${about}”, dan halaman itu tidak menjawab pertanyaan secara langsung.`
+    : `${name} discusses “${about},” and that page does not directly answer the question.`;
+  return { id: `near-${best.id}`, text, kind: "fact", citations: [best.id], flag: "partial" };
+}
+
 const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;
 const LOWER_RISK = /\b(menurun(?:kan)?|lower|decreas\w*|tidak meningkat(?:kan)?|tidak menaik(?:kan)?)\b/i;
 
@@ -364,20 +414,31 @@ function withinSourceConflicts(passages: Passage[], language: string): { topic: 
     if (!higher || !lower) continue;
     const shared = numberTokens(higher.text).some((token) => numberTokens(lower.text).includes(token));
     if (!shared) continue;
-    const quote = (passage: Passage, pattern: RegExp) => {
-      const hit = passage.text.split(/(?<=[.!?])\s+/).find((part) => pattern.test(part)) ?? passage.text;
-      return clip(hit, 220);
+    const dose = (passage: Passage) => {
+      const match = passage.text.match(/(?:lebih\s+dari|more\s+than|at\s+least|>|≥|≤|<=|<)\s*\d+\s*(?:cangkir|cups)?/i);
+      return match ? match[0].replace(/\s+/g, " ").trim() : "";
+    };
+    const sideText = (passage: Passage, higherRisk: boolean) => {
+      const hint = dose(passage);
+      if (indonesian) {
+        return higherRisk
+          ? `Kutipan ini mengaitkan${hint ? ` ${hint}` : ""} dengan risiko yang lebih tinggi.`
+          : `Kutipan ini mengaitkan${hint ? ` ${hint}` : ""} dengan risiko yang lebih rendah.`;
+      }
+      return higherRisk
+        ? `This passage links${hint ? ` ${hint}` : " intake"} with higher risk.`
+        : `This passage links${hint ? ` ${hint}` : " intake"} with lower risk.`;
     };
     conflicts.push({
       topic: indonesian ? "Temuan yang berlawanan di sumber yang sama" : "The same source disagrees with itself",
       sides: [
         {
           label: indonesian ? "Risiko naik" : "Higher risk",
-          sentences: [{ id: `up-${higher.id}`, text: quote(higher, HIGHER_RISK), kind: "fact", citations: [higher.id] }],
+          sentences: [{ id: `up-${higher.id}`, text: sideText(higher, true), kind: "fact", citations: [higher.id] }],
         },
         {
           label: indonesian ? "Risiko turun" : "Lower risk",
-          sentences: [{ id: `down-${lower.id}`, text: quote(lower, LOWER_RISK), kind: "fact", citations: [lower.id] }],
+          sentences: [{ id: `down-${lower.id}`, text: sideText(lower, false), kind: "fact", citations: [lower.id] }],
         },
       ],
     });

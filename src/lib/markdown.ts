@@ -1,7 +1,7 @@
 import { briefLabels, formatDate } from "@/lib/text";
 import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
 
-export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflicts">): string[] {
+export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflicts" | "aside">): string[] {
   const order: string[] = [];
   const push = (sentence: Sentence) => {
     for (const id of sentence.citations) {
@@ -11,6 +11,7 @@ export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflict
   brief.lede.forEach(push);
   brief.sections.forEach((section) => section.sentences.forEach(push));
   brief.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(push)));
+  brief.aside.forEach(push);
   return order;
 }
 
@@ -50,11 +51,6 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     });
     lines.push("");
   }
-  if (brief.aside.length > 0) {
-    lines.push(`## ${labels.instead}`, "");
-    brief.aside.forEach((item) => lines.push(`- ${item}`));
-    lines.push("");
-  }
   if (brief.lede.length > 0) {
     lines.push(brief.lede.map((item) => sentence(item)).join(" "), "");
   }
@@ -69,6 +65,11 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
         lines.push(`**${side.label}.** ${side.sentences.map((item) => sentence(item)).join(" ")}`, "");
       }
     }
+  }
+  if (brief.aside.length > 0) {
+    lines.push(`## ${labels.instead}`, "");
+    brief.aside.forEach((item) => lines.push(`- ${sentence(item)}`));
+    lines.push("");
   }
   if (!brief.insufficient && brief.gaps.length > 0) {
     lines.push(`## ${labels.unanswered}`, "");

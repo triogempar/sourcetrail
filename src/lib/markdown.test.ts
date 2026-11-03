@@ -49,6 +49,32 @@ describe("markdown export", () => {
     expect(markdown).toContain("Not yet answered");
     expect(markdown).toContain("Fixture desk");
   });
+
+  it("puts an off-topic note below the answer and keeps its footnote", () => {
+    const withAside: Brief = {
+      ...brief,
+      aside: [{ id: "s9", text: "A library chess club in the United States drew 17 people.", kind: "fact", citations: ["p9"] }],
+      passages: [
+        ...brief.passages,
+        {
+          id: "p9",
+          url: "https://example.com/chess",
+          title: "Chess night",
+          publisher: "Facebook",
+          publishedDate: null,
+          text: "A library chess club in the United States drew 17 people.",
+          origin: "extract",
+        },
+      ],
+    };
+    const markdown = briefToMarkdown(withAside, null);
+    const answerAt = markdown.indexOf("612 km");
+    const insteadAt = markdown.indexOf("What we found instead");
+    expect(answerAt).toBeGreaterThan(-1);
+    expect(insteadAt).toBeGreaterThan(answerAt);
+    expect(markdown).toContain("17 people.[^2]");
+    expect(citationOrder(withAside)).toEqual(["p1", "p9"]);
+  });
 });
 
 describe("ndjson and stream state", () => {

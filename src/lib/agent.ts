@@ -299,6 +299,7 @@ export async function runResearch(
       mode: deps.mode,
       modelError,
       language: plan.language,
+      question,
     });
     const gaps = uniqueGaps([...adjudicated.gaps, ...searchGaps]);
     const brief: Brief = {

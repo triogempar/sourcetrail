@@ -83,12 +83,6 @@ export function BriefView({
         </div>
       </header>
       {brief.insufficient ? gaps : null}
-      {brief.aside.length > 0 ? (
-        <section className="instead" aria-label={labels.instead}>
-          <h2>{labels.instead}</h2>
-          <ul>{brief.aside.map((item) => <li key={item}>{item}</li>)}</ul>
-        </section>
-      ) : null}
       {brief.lede.length > 0 ? (
         <p className="lede">
           {brief.lede.map((sentence) => (
@@ -147,6 +141,24 @@ export function BriefView({
               </div>
             </div>
           ))}
+        </section>
+      ) : null}
+      {brief.aside.length > 0 ? (
+        <section className="instead" aria-label={labels.instead}>
+          <h2>{labels.instead}</h2>
+          <ul>
+            {brief.aside.map((sentence) => (
+              <li key={sentence.id}>
+                <SentenceText
+                  sentence={sentence}
+                  order={order}
+                  labels={labels}
+                  onCite={onCite}
+                  activePassageId={activePassageId}
+                />
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
       {!brief.insufficient && brief.gaps.length > 0 ? gaps : null}

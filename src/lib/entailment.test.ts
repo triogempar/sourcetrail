@@ -79,6 +79,34 @@ describe("assessSupport", () => {
     expect(readablePublisher("health.detik.com")).toBe("detikHealth");
     expect(readablePublisher("Health detik")).toBe("detikHealth");
     expect(readablePublisher("prin.or.id", "Konsumsi kopi harian | Jurnal Kedokteran Komunitas")).toBe("Jurnal Kedokteran Komunitas");
+    expect(readablePublisher("withpower.com")).toBe("Withpower");
+    expect(readablePublisher("Power", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", "https://www.withpower.com/study")).toBe("Withpower");
+    expect(readablePublisher("stikesfa.ac.id", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...")).toBe("Stikesfa");
+    expect(readablePublisher("Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", undefined, "https://ejournal.stikesfa.ac.id/index.php/kopi")).toBe("Stikesfa");
+  });
+
+  it("accepts a publisher name that lives in the title or URL", () => {
+    const result = assessSupport(
+      "Jurnal LPPM Stikesfa dan Repositori Undip melaporkan risiko sekitar 4 kali lebih tinggi.",
+      ["Risiko hipertensi sekitar 4 kali lebih tinggi pada kelompok tersebut."],
+      "Jurnal LPPM Stikesfa https://repository.undip.ac.id/kopi Repositori Undip",
+    );
+    expect(result.reason).not.toMatch(/LPPM Stikesfa|Repositori Undip/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("flags routine coffee when the source only compared a dose", () => {
+    const widened = assessSupport(
+      "Diagnos dan Jurnal JIG melaporkan risiko hipertensi yang lebih rendah pada konsumsi kopi rutin.",
+      ["Jurnal JIG melaporkan risiko hipertensi lebih rendah pada konsumsi lebih dari 2 cangkir per hari dibanding 2 cangkir atau kurang."],
+    );
+    const scoped = assessSupport(
+      "Jurnal JIG melaporkan risiko hipertensi lebih rendah pada konsumsi lebih dari 2 cangkir per hari.",
+      ["Jurnal JIG melaporkan risiko hipertensi lebih rendah pada konsumsi lebih dari 2 cangkir per hari dibanding 2 cangkir atau kurang."],
+    );
+    expect(widened.level).toBe("partial");
+    expect(widened.reason).toMatch(/narrower comparison/);
+    expect(scoped.reason).not.toMatch(/narrower comparison/);
   });
 
   it("ignores digits inside a hostname", () => {
