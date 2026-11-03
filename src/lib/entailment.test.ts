@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessSupport } from "@/lib/entailment";
-import { findSupportSpan, heuristicRewrite } from "@/lib/text";
+import { findSupportSpan, heuristicRewrite, nameInText, naturalizeSentence, readablePublisher } from "@/lib/text";
 
 const PASSAGE = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h, measured by the city's technical university on 28 October 2026.";
 
@@ -46,6 +46,31 @@ describe("assessSupport", () => {
       ["A national poll in the U.S. found both highs for the sample."],
     );
     expect(result.level).toBe("supported");
+  });
+
+  it("matches Democratic House inside a longer party phrase", () => {
+    expect(nameInText("Democratic House", "a Democratic Party win for the House")).toBe(true);
+    const result = assessSupport(
+      "The poll points to a Democratic House.",
+      ["The poll describes a Democratic Party win for the House."],
+    );
+    expect(result.reason).not.toMatch(/Democratic House/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("strips parenthetical citation tags before looking for figures", () => {
+    expect(naturalizeSentence("The highway range was 612 km (p7).")).toBe("The highway range was 612 km.");
+    const result = assessSupport(
+      "A Hamburg pilot reported a 612 km highway range (p7).",
+      [PASSAGE],
+    );
+    expect(result.reason).not.toMatch(/figure 7/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("turns health.detik.com into detikHealth", () => {
+    expect(readablePublisher("health.detik.com")).toBe("detikHealth");
+    expect(readablePublisher("Health detik")).toBe("detikHealth");
   });
 
   it("ignores digits inside a hostname", () => {

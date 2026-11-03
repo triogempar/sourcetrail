@@ -1,5 +1,5 @@
 import type { SelectedHit } from "@/lib/sources";
-import { canonicalUrl, clip, contentWords, publisherFromUrl } from "@/lib/text";
+import { canonicalUrl, clip, contentWords, publisherFromUrl, readablePublisher } from "@/lib/text";
 import type { ExtractResult, Passage } from "@/lib/types";
 
 export type ReadNote = {
@@ -168,7 +168,7 @@ function makePassage(index: number, hit: SelectedHit, text: string, origin: Pass
     id: `p${index}`,
     url: hit.url,
     title: hit.title,
-    publisher: hit.publisher || publisherFromUrl(hit.url),
+    publisher: readablePublisher(hit.publisher || publisherFromUrl(hit.url)),
     publishedDate: hit.publishedDate,
     text,
     origin,

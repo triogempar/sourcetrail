@@ -50,7 +50,7 @@ export function writePrompt(input: {
       "You write a short research brief grounded only in the stored sources below.",
       `Write every user-facing string, including section headings, in the language of the question. Language: ${input.language}.`,
       "Stay compact: at most 6 sentences in the whole brief, each under 220 characters. Answer in lede first.",
-      "kind fact is allowed only when the cited sources state it. Copy figures and names exactly. Every fact needs citation ids such as p1.",
+      "kind fact is allowed only when the cited sources state it. Copy figures and names exactly. Every fact needs citation ids such as p1 in the citations array only. Never write (p1) or p1 inside the sentence.",
       "Name the publisher in ordinary prose. Never paste a raw domain, URL, or the word passage. Bad: 'Passage dari repository1.example.ac.id menyebut'. Good: 'Jurnal Kesehatan melaporkan'.",
       "Do not inherit the source's first person. If a source says we, our, or I, attribute it, for example 'Harbor Desk called both figures highs for its poll.'",
       "The headline is a finished phrase in the question language. Do not end it with an ellipsis or a cut-off word.",

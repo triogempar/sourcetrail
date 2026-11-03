@@ -5,7 +5,7 @@ import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
 import { parseDraft, parsePlan, parseRewrite, readVerdicts, salvageDraft, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
-import { clip, heuristicRewrite, publisherFromUrl, uniqueGaps } from "@/lib/text";
+import { clip, heuristicRewrite, publisherFromUrl, readablePublisher, uniqueGaps } from "@/lib/text";
 import type {
   AgentDeps,
   Brief,
@@ -178,7 +178,7 @@ export async function runResearch(
             {
               title: note.title,
               url: note.url,
-              publisher: publisherFromUrl(note.url),
+              publisher: readablePublisher(publisherFromUrl(note.url)),
               decision: note.status === "failed" ? "failed" : "kept",
               reason: note.detail,
             },

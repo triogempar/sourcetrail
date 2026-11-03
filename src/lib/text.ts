@@ -81,6 +81,10 @@ const NUMBER_WORDS: Record<string, string[]> = {
   "12": ["twelve", "dua belas"],
 };
 
+function stripCitationTags(text: string): string {
+  return text.replace(/\s*[([]\s*p\s*\d+(?:\s*[,;]\s*p\s*\d+)*\s*[)\]]/gi, "");
+}
+
 /** Drop URLs and hostnames so digits inside repository1.example.ac.id are not figures. */
 export function stripWebAddresses(text: string): string {
   return text
@@ -90,7 +94,7 @@ export function stripWebAddresses(text: string): string {
 
 /** Fold 26/27 and 2026/27 into the same season token. Other numbers stay as written. */
 export function numberTokens(text: string): string[] {
-  const normalized = stripWebAddresses(text).toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(percent|per cent)/g, "$1%");
+  const normalized = stripWebAddresses(stripCitationTags(text)).toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(percent|per cent)/g, "$1%");
   const seasons: string[] = [];
   const withoutSeasons = normalized.replace(/\b(\d{2}|\d{4})\s*[/\u2013-]\s*(\d{2})\b/g, (match, left: string, right: string) => {
     const leftYear = Number(left.length === 4 ? left.slice(-2) : left);
@@ -123,10 +127,14 @@ export function numberSatisfied(token: string, passage: string): boolean {
 }
 
 export function naturalizeSentence(text: string): string {
-  return text.replace(
-    /^(?:the\s+)?passages?\s+(?:dari|from)\s+([^,:.]{2,80}?)\s+(?:menyebut(?:kan)?|menyatakan|mengatakan|melaporkan|menulis|says|said|reports|reported|notes|noted|writes|wrote)\s*(?:,|:|bahwa|that)?\s*/iu,
-    "$1: ",
-  ).trim();
+  return stripCitationTags(text)
+    .replace(/\bHealth detik\b/g, "detikHealth")
+    .replace(
+      /^(?:the\s+)?passages?\s+(?:dari|from)\s+([^,:.]{2,80}?)\s+(?:menyebut(?:kan)?|menyatakan|mengatakan|melaporkan|menulis|says|said|reports|reported|notes|noted|writes|wrote)\s*(?:,|:|bahwa|that)?\s*/iu,
+      "$1: ",
+    )
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 export function loneAccountHeading(language: string): string {
@@ -180,12 +188,83 @@ export function nameInText(name: string, passage: string): boolean {
   if (hasWord(passage, name)) return true;
   const parts = name.split(/\s+/).filter(Boolean);
   if (parts.length < 2) return false;
-  const phrase = parts.map((part) => escapeRegExp(part)).join("\\W+");
+  const phrase = parts.map((part) => escapeRegExp(part)).join("(?:\\W+\\w+){0,8}\\W+");
   if (new RegExp(phrase, "i").test(passage)) return true;
   const initials = parts.map((part) => part.charAt(0)).join("");
   if (new RegExp(`\\b${initials}\\b`, "i").test(passage)) return true;
   const dotted = parts.map((part) => `${escapeRegExp(part.charAt(0))}\\.`).join("\\s*");
-  return new RegExp(`\\b${dotted}`, "i").test(passage);
+  if (new RegExp(`\\b${dotted}`, "i").test(passage)) return true;
+  const words = parts.filter((part) => part.length >= 3 && !FUNCTION_WORDS.has(part.toLowerCase()));
+  return words.length >= 2 && words.every((part) => hasWord(passage, part));
+}
+
+const PUBLISHER_TLDS = new Set(["com", "org", "net", "edu", "gov", "ac", "id", "uk", "au", "sg", "my", "io", "ai", "co", "go", "sch", "int"]);
+
+export function readablePublisher(name: string): string {
+  const trimmed = name.trim();
+  if (/^health\s+detik$/i.test(trimmed)) return "detikHealth";
+  const host = trimmed.replace(/^www\./i, "");
+  if (!host.includes(".")) return trimmed;
+  const labels = host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label.toLowerCase()) && !/^www\d*$/i.test(label));
+  if (labels.length === 0) return trimmed;
+  if (labels[labels.length - 1]?.toLowerCase() === "detik") {
+    const section = (labels[labels.length - 2] ?? "").replace(/\d+$/g, "");
+    if (!section) return "detik";
+    return `detik${section.charAt(0).toUpperCase()}${section.slice(1)}`;
+  }
+  const words = labels.map((label) => label.replace(/\d+$/g, "")).filter(Boolean);
+  return words.length > 0 ? words.join(" ") : trimmed;
+}
+
+export type BriefLabels = {
+  insufficient: string;
+  contested: string;
+  brief: string;
+  disagree: string;
+  unanswered: string;
+  searched: string;
+  kept: string;
+  unread: string;
+  verification: string;
+  inference: string;
+  check: string;
+  struck: string;
+  notRun: string;
+};
+
+export function briefLabels(language: string): BriefLabels {
+  if (/^id\b|indones/i.test(language)) {
+    return {
+      insufficient: "Bukti tidak cukup",
+      contested: "Sumber berbeda",
+      brief: "Ringkasan riset",
+      disagree: "Sumber tidak sependapat",
+      unanswered: "Belum terjawab",
+      searched: "Yang dicari",
+      kept: "Kutipan yang disimpan",
+      unread: "Dibaca, tidak dikutip",
+      verification: "Pemeriksaan",
+      inference: "Inferensi",
+      check: "Periksa",
+      struck: "Dicoret",
+      notRun: "Tidak dijalankan",
+    };
+  }
+  return {
+    insufficient: "Insufficient evidence",
+    contested: "Contested record",
+    brief: "Research brief",
+    disagree: "Sources disagree",
+    unanswered: "Not yet answered",
+    searched: "What was searched",
+    kept: "Passages kept",
+    unread: "Read, not cited",
+    verification: "Verification",
+    inference: "Inference",
+    check: "Check",
+    struck: "Struck",
+    notRun: "Not run",
+  };
 }
 
 export function hasWord(haystack: string, word: string): boolean {

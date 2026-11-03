@@ -24,7 +24,7 @@ const passages: Passage[] = [
 ];
 
 describe("adjudicate", () => {
-  it("strikes an unsupported fact even when a model marks it supported", () => {
+  it("keeps a model-supported fact as partial instead of striking it", () => {
     const draft = tagDraft({
       headline: "One Hamburg car posted a 612 km highway range",
       insufficient: false,
@@ -60,10 +60,75 @@ describe("adjudicate", () => {
       mode: "mock",
       modelError: null,
     });
-    expect(result.lede.map((sentence) => sentence.text).join(" ")).not.toMatch(/40/);
-    expect(result.summary.droppedSentences.some((sentence) => sentence.reason.includes("40%"))).toBe(true);
-    expect(result.summary.note).toMatch(/overrode/);
+    const cost = result.lede.find((sentence) => sentence.text.includes("40"));
+    expect(cost?.flag).toBe("partial");
+    expect(result.summary.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(false);
     expect(result.lede.some((sentence) => sentence.kind === "inference")).toBe(true);
+  });
+
+  it("still strikes an invented figure when the model verifier did not run", () => {
+    const draft = tagDraft({
+      headline: "One Hamburg car posted a 612 km highway range",
+      insufficient: false,
+      lede: [{ text: "The pilots have already cut pack cost by 40 percent.", kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+    });
+    expect(result.lede).toHaveLength(0);
+    expect(result.summary.droppedSentences.some((sentence) => sentence.reason.includes("40%"))).toBe(true);
+  });
+
+  it("uses a sibling passage from the same page when the citation is the other chunk", () => {
+    const page: Passage[] = [
+      {
+        id: "p9",
+        url: "https://example.com/silver",
+        title: "Numbers",
+        publisher: "Silver Bulletin",
+        publishedDate: "2026-10-01",
+        origin: "extract",
+        text: "The generic ballot stands at D +8.9 and D +9.2 among likely voters.",
+      },
+      {
+        id: "p10",
+        url: "https://example.com/silver",
+        title: "Name",
+        publisher: "Silver Bulletin",
+        publishedDate: "2026-10-01",
+        origin: "extract",
+        text: "Silver Bulletin published the generic ballot on Monday.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Silver Bulletin puts Democrats ahead",
+      insufficient: false,
+      lede: [{
+        text: "Silver Bulletin puts the generic ballot at D +8.9 and D +9.2.",
+        kind: "fact",
+        citations: ["p10"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: page,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+    });
+    expect(result.lede).toHaveLength(1);
+    expect(result.lede[0]?.citations).toEqual(expect.arrayContaining(["p9", "p10"]));
+    expect(result.summary.dropped).toBe(0);
   });
 
   it("drops an inference that invents a figure", () => {

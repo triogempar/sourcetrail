@@ -40,8 +40,9 @@ describe("mock inquiries", () => {
     expect(result.error).toBeNull();
     expect(result.brief?.insufficient).toBe(false);
     expect(result.brief?.lede.some((sentence) => sentence.text.includes("612 km"))).toBe(true);
-    expect(JSON.stringify(result.brief)).not.toMatch(/40 percent/);
-    expect(result.summary?.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(true);
+    const cost = result.brief?.lede.find((sentence) => sentence.text.includes("40 percent"));
+    expect(cost?.flag).toBe("partial");
+    expect(result.summary?.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(false);
     expect(result.credits).toBeLessThanOrEqual(8);
     expect(events.some((event) => event.type === "brief")).toBe(true);
     expect(result.brief?.passages.every((passage) => passage.url.startsWith("https://"))).toBe(true);

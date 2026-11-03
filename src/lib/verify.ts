@@ -1,6 +1,6 @@
 import { assessSupport } from "@/lib/entailment";
 import type { ModelVerdict } from "@/lib/schema";
-import { cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
+import { canonicalUrl, cleanHeadline, cleanSentence, clip, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, properNouns, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
 export type WorkingSentence = DraftSentence & { id: string };
@@ -65,40 +65,59 @@ type Judgement = {
   reason: string;
 };
 
+function familyIds(citations: string[], passages: Passage[]): string[] {
+  const urls = new Set<string>();
+  for (const id of citations) {
+    const passage = passages.find((item) => item.id === id);
+    if (passage) urls.add(canonicalUrl(passage.url));
+  }
+  if (urls.size === 0) return citations;
+  const ids = passages.filter((passage) => urls.has(canonicalUrl(passage.url))).map((passage) => passage.id);
+  return ids.length > 0 ? ids : citations;
+}
+
+function evidenceTexts(citations: string[], passages: Passage[]): string[] {
+  return familyIds(citations, passages)
+    .map((id) => passages.find((passage) => passage.id === id)?.text)
+    .filter((text): text is string => Boolean(text));
+}
+
+function claimKey(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}.+%]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function soften(reason: string, model: ModelVerdict["verdict"] | undefined): Judgement {
+  if (model === "supported") {
+    return { action: "flag", reason: `${reason} The second model marked it supported, so it stays for a check.` };
+  }
+  return { action: "drop", reason };
+}
+
 function judgeSentence(
   sentence: WorkingSentence,
   passages: Passage[],
   verdicts: Map<string, ModelVerdict>,
 ): Judgement {
-  const cited = sentence.citations
-    .map((id) => passages.find((passage) => passage.id === id)?.text)
-    .filter((text): text is string => Boolean(text));
+  const cited = evidenceTexts(sentence.citations, passages);
   const model = verdicts.get(sentence.id)?.verdict;
   if (sentence.kind === "inference") {
     const pool = cited.length > 0 ? cited : passages.map((passage) => passage.text);
     const missingNumber = numberTokens(sentence.text).find((token) => !numberSatisfied(token, pool.join("\n")));
-    if (missingNumber) {
-      return { action: "drop", reason: `Inference introduces ${missingNumber}, which is not in the cited passage.` };
-    }
+    if (missingNumber) return soften(`Inference introduces ${missingNumber}, which is not in the cited passage.`, model);
     const missingName = properNouns(sentence.text).find((name) => !pool.some((text) => nameInText(name, text)));
-    if (missingName) {
-      return { action: "drop", reason: `Inference introduces ${missingName}, which is not in the cited passage.` };
-    }
+    if (missingName) return soften(`Inference introduces ${missingName}, which is not in the cited passage.`, model);
     return { action: "keep", reason: "Labeled inference, with no new figures or names." };
   }
   if (cited.length === 0) {
-    return {
-      action: "drop",
-      reason: sentence.citations.length === 0
+    return soften(
+      sentence.citations.length === 0
         ? "Factual sentence has no citation."
         : "The citation does not match a stored passage.",
-    };
+      model,
+    );
   }
   const support = assessSupport(sentence.text, cited);
-  if (support.level === "unsupported") {
-    const override = model === "supported" ? " A model marked it supported; the passage check struck it." : "";
-    return { action: "drop", reason: `${support.reason}${override}` };
-  }
+  if (support.level === "unsupported") return soften(support.reason, model);
   if (support.level === "partial") {
     if (model === "unsupported") {
       return { action: "drop", reason: `${support.reason} The second model also rejected it.` };
@@ -114,12 +133,12 @@ function judgeSentence(
   return { action: "keep", reason: support.reason };
 }
 
-function toSentence(sentence: WorkingSentence, flag?: "partial"): Sentence {
+function toSentence(sentence: WorkingSentence, passages: Passage[], flag?: "partial"): Sentence {
   const next: Sentence = {
     id: sentence.id,
     text: sentence.text,
     kind: sentence.kind,
-    citations: sentence.citations,
+    citations: familyIds(sentence.citations, passages),
   };
   if (flag) next.flag = flag;
   return next;
@@ -142,9 +161,7 @@ export function verificationNote(input: {
   if (!input.modelUsed) {
     return "Local entailment checked every sentence against its passage.";
   }
-  return input.droppedOverride
-    ? "A second Nebius model reviewed the citations. Where it approved a sentence the passage does not contain, the passage check won."
-    : "A second Nebius model reviewed the citations, and each surviving fact still matches its passage.";
+  return "A second Nebius model reviewed the citations. A sentence it marked supported stays, with a check when the local heuristic dissented.";
 }
 
 export function adjudicate(input: {
@@ -164,6 +181,14 @@ export function adjudicate(input: {
   summary: VerificationSummary;
 } {
   const verdicts = new Map((input.modelVerdicts ?? []).map((verdict) => [verdict.id, verdict]));
+  const citationGroups = new Map<string, string[]>();
+  const collectCitations = (sentence: WorkingSentence) => {
+    const key = claimKey(sentence.text);
+    citationGroups.set(key, [...new Set([...(citationGroups.get(key) ?? []), ...sentence.citations])]);
+  };
+  input.draft.lede.forEach(collectCitations);
+  input.draft.sections.forEach((section) => section.sentences.forEach(collectCitations));
+  input.draft.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(collectCitations)));
   const dropped: { text: string; reason: string }[] = [];
   const droppedKeys = new Set<string>();
   let supported = 0;
@@ -174,7 +199,11 @@ export function adjudicate(input: {
 
   const keep = (sentence: WorkingSentence): Sentence | null => {
     checked += 1;
-    const judgement = judgeSentence(sentence, input.passages, verdicts);
+    const merged: WorkingSentence = {
+      ...sentence,
+      citations: citationGroups.get(claimKey(sentence.text)) ?? sentence.citations,
+    };
+    const judgement = judgeSentence(merged, input.passages, verdicts);
     if (judgement.action === "drop") {
       if (verdicts.get(sentence.id)?.verdict === "supported" && sentence.kind === "fact") droppedOverride = true;
       const key = sentence.text.trim().toLowerCase();
@@ -187,17 +216,23 @@ export function adjudicate(input: {
     if (sentence.kind === "inference") inferences += 1;
     if (judgement.action === "flag") {
       flagged += 1;
-      return toSentence(sentence, "partial");
+      return toSentence(merged, input.passages, "partial");
     }
     if (sentence.kind === "fact") supported += 1;
-    return toSentence(sentence);
+    return toSentence(merged, input.passages);
   };
 
   const lede = input.draft.lede.map(keep).filter((sentence): sentence is Sentence => Boolean(sentence));
+  const seenClaims = new Set(lede.map((sentence) => claimKey(sentence.text)));
   const sections = input.draft.sections
     .map((section) => ({
       heading: section.heading,
-      sentences: section.sentences.map(keep).filter((sentence): sentence is Sentence => Boolean(sentence)),
+      sentences: section.sentences.map(keep).filter((sentence): sentence is Sentence => Boolean(sentence)).filter((sentence) => {
+        const key = claimKey(sentence.text);
+        if (seenClaims.has(key)) return false;
+        seenClaims.add(key);
+        return true;
+      }),
     }))
     .filter((section) => section.sentences.length > 0);
 

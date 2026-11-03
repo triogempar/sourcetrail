@@ -44,7 +44,7 @@ describe("markdown export", () => {
     });
     expect(markdown).toContain("[^1]");
     expect(markdown).toContain("Harbor Desk");
-    expect(markdown).toContain("*(inference)*");
+    expect(markdown).toContain("*(Inference)*");
     expect(markdown).toContain("Not yet answered");
     expect(markdown).toContain("Fixture desk");
   });
