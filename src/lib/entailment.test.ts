@@ -100,6 +100,7 @@ describe("assessSupport", () => {
       expect(readablePublisher("Source", undefined, `https://${host}/story`)).toBe(brand);
     }
     expect(naturalizeSentence("Sumber diagnos.co.id juga mencatat angka yang sama.")).toBe("Sumber Diagnos juga mencatat angka yang sama.");
+    expect(readablePublisher("Athletic lettering faces", "Athletic lettering faces", "https://www.myfonts.com/fonts/braga")).toBe("Myfonts");
   });
 
   it("treats matching figures and names as supported when the verb is paraphrased", () => {

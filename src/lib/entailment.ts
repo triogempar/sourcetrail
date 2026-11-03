@@ -40,7 +40,7 @@ export function appearsVerbatim(sentence: string, passages: string[]): boolean {
   return passages.some((passage) => foldMatch(passage).includes(needle));
 }
 
-function statesAbsence(sentence: string): boolean {
+export function statesAbsence(sentence: string): boolean {
   return ABSENCE.test(sentence);
 }
 

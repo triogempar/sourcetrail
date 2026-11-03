@@ -248,12 +248,21 @@ function looksLikeArticle(text: string): boolean {
   return /^(pengaruh|the effect|the impact|studi |analisis |hubungan |dampak |effect of |association )/i.test(trimmed);
 }
 
+function looksLikePageTitle(name: string): boolean {
+  const tokens = name.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 3) return false;
+  return tokens.slice(1).every((token) => {
+    const first = token.charAt(0);
+    return first !== first.toUpperCase() || first === first.toLowerCase();
+  });
+}
+
 function publicationName(title?: string): string | null {
   if (!title || looksTruncated(title)) return null;
   const parts = title.split(/\s+[|–—]\s+|\s+-\s+/).map((part) => part.trim()).filter((part) => part.length >= 4 && part.length <= 60);
-  if (parts.length === 0) return null;
+  if (parts.length < 2) return null;
   const last = parts[parts.length - 1] ?? "";
-  if (!last || looksLikeArticle(last) || last.length > 40) return null;
+  if (!last || looksLikeArticle(last) || looksLikePageTitle(last) || last.length > 40) return null;
   return last;
 }
 
@@ -281,7 +290,7 @@ function brandFromHost(host: string): string | null {
 
 function isHumanPublisher(name: string): boolean {
   if (!name || name.includes("://") || /\s/.test(name) === false) return false;
-  if (looksLikeArticle(name) || looksTruncated(name)) return false;
+  if (looksLikeArticle(name) || looksTruncated(name) || looksLikePageTitle(name)) return false;
   if (SLUG_BRANDS[name.toLowerCase()]) return false;
   const tokens = name.split(/\s+/).filter(Boolean);
   return tokens.length >= 2 && tokens.every((token) => token.length <= 28);
@@ -304,7 +313,7 @@ export function readablePublisher(name: string, title?: string, url?: string): s
   if (known) return known;
   const hyphen = prettifyHyphen(hostOf(url).split(".")[0] ?? "") || prettifyHyphen(trimmed.toLowerCase());
   if (hyphen) return hyphen;
-  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !/^(?:source|sumber)$/i.test(trimmed) && !isWeakPublisher(trimmed)) {
+  if (trimmed && !looksLikeArticle(trimmed) && !looksLikePageTitle(trimmed) && !trimmed.includes(".") && !/^(?:source|sumber)$/i.test(trimmed) && !isWeakPublisher(trimmed)) {
     return trimmed;
   }
   const brand = fallbackBrand(url || trimmed) || fallbackBrand(trimmed);

@@ -822,4 +822,214 @@ describe("adjudicate", () => {
     expect(result.aside.some((sentence) => /rank|7,880,232|7880232/.test(sentence.text))).toBe(false);
     expect(result.lede.some((sentence) => /rank|7,880,232/.test(sentence.text))).toBe(false);
   });
+
+  it("parks off-topic nearest-source facts in the aside when evidence is insufficient", () => {
+    const pages: Passage[] = [
+      {
+        id: "p1",
+        url: "https://en.wikipedia.org/wiki/Vital_articles",
+        title: "Vital articles",
+        publisher: "Wikipedia",
+        publishedDate: null,
+        origin: "extract",
+        text: "The vital-articles list names Braga and Bandung among its geography entries.",
+      },
+      {
+        id: "p2",
+        url: "https://example.com/braga-it",
+        title: "Company",
+        publisher: "Example",
+        publishedDate: null,
+        origin: "extract",
+        text: "The Braga IT company reports a headcount of 59.",
+      },
+      {
+        id: "p3",
+        url: "https://www.myfonts.com/fonts/braga",
+        title: "Athletic lettering faces",
+        publisher: "Athletic lettering faces",
+        publishedDate: null,
+        origin: "extract",
+        text: "Braga and Braga Huis are typefaces in this family.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran di perpustakaan Braga",
+      insufficient: true,
+      lede: [{
+        text: "None of the stored sources gives an attendance figure for the chess club at the Braga public library.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [{
+        heading: "What the nearest sources cover",
+        sentences: [
+          { text: "The vital-articles list names Braga and Bandung among its geography entries.", kind: "fact", citations: ["p1"] },
+          { text: "The Braga IT company reports a headcount of 59.", kind: "fact", citations: ["p2"] },
+          { text: "Braga and Braga Huis are typefaces in this family.", kind: "fact", citations: ["p3"] },
+        ],
+      }],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [
+        { id: "s1", verdict: "supported", relevant: true, reason: "gap" },
+        { id: "s2", verdict: "supported", relevant: true, reason: "list" },
+        { id: "s3", verdict: "supported", relevant: true, reason: "headcount" },
+        { id: "s4", verdict: "supported", relevant: true, reason: "font" },
+      ],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?",
+    });
+    const body = [...result.lede, ...result.sections.flatMap((section) => section.sentences)].map((sentence) => sentence.text).join(" ");
+    expect(result.sections).toHaveLength(0);
+    expect(body).not.toMatch(/vital-articles|headcount|typefaces/i);
+    expect(body).toMatch(/attendance figure|Braga public library/i);
+    expect(result.aside.map((sentence) => sentence.text).join(" ")).toMatch(/headcount/);
+    expect(result.aside.map((sentence) => sentence.text).join(" ")).toMatch(/typefaces/);
+  });
+
+  it("keeps both survey figures in a disagreement side", () => {
+    const full = "Pew found that 46% of all U.S. adults expected Democrats to win the Senate and 48% expected Republicans.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.pewresearch.org/senate",
+      title: "Expectations",
+      publisher: "Pew Research Center",
+      publishedDate: null,
+      origin: "extract",
+      text: full,
+    }, {
+      id: "p2",
+      url: "https://www.example.com/other-poll",
+      title: "Other poll",
+      publisher: "Other Poll",
+      publishedDate: null,
+      origin: "extract",
+      text: "Another national survey found 51% of adults expected Republicans to win the Senate and 44% expected Democrats.",
+    }];
+    const draft = tagDraft({
+      headline: "Surveys split on the Senate",
+      insufficient: false,
+      lede: [{ text: full, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Who adults expect to win the Senate",
+        sides: [
+          { label: "Pew", sentences: [{ text: full, kind: "fact", citations: ["p1"] }] },
+          { label: "Other poll", sentences: [{ text: "Another national survey found 51% of adults expected Republicans to win the Senate and 44% expected Democrats.", kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who do U.S. adults expect to win the Senate?",
+    });
+    const pew = result.conflicts.flatMap((conflict) => conflict.sides).find((side) => side.label === "Pew")?.sentences[0]?.text ?? "";
+    expect(pew).toMatch(/46%/);
+    expect(pew).toMatch(/48%/);
+    expect(result.conflicts.length).toBeGreaterThan(0);
+  });
+
+  it("omits a disagreement that pairs a survey with betting odds", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.pewresearch.org/senate",
+      title: "Expectations",
+      publisher: "Pew Research Center",
+      publishedDate: null,
+      origin: "extract",
+      text: "Pew found that 46% of adults expected Democrats to win the Senate.",
+    }, {
+      id: "p9",
+      url: "https://kalshi.com/senate",
+      title: "Odds",
+      publisher: "Kalshi",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi showed 61% favoring a Republican Senate win.",
+    }];
+    const draft = tagDraft({
+      headline: "Surveys split on the Senate",
+      insufficient: false,
+      lede: [{ text: "Pew found that 46% of adults expected Democrats to win the Senate.", kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Senate outlook",
+        sides: [
+          { label: "Pew", sentences: [{ text: "Pew found that 46% of adults expected Democrats to win the Senate.", kind: "fact", citations: ["p1"] }] },
+          { label: "Kalshi", sentences: [{ text: "Kalshi showed 61% favoring a Republican Senate win.", kind: "fact", citations: ["p9"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who is favored to win the Senate?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it("keeps a little-difference label attached to the full finding", () => {
+    const finding = "The trial finds little difference at one year, though early months showed significantly greater weight loss, and the advantage was largely gone beyond six months.";
+    const other = "A second trial reported significantly greater weight loss that remained at one year.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/trial-a",
+      title: "Trial A",
+      publisher: "Journal A",
+      publishedDate: null,
+      origin: "extract",
+      text: finding,
+    }, {
+      id: "p2",
+      url: "https://example.com/trial-b",
+      title: "Trial B",
+      publisher: "Journal B",
+      publishedDate: null,
+      origin: "extract",
+      text: other,
+    }];
+    const draft = tagDraft({
+      headline: "Satu studi menunjukkan penurunan berat badan",
+      insufficient: false,
+      lede: [{ text: finding, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Uji pertama", sentences: [{ text: finding, kind: "fact", citations: ["p1"] }] }],
+      conflicts: [{
+        topic: "Weight loss",
+        sides: [
+          { label: "Finds little difference", sentences: [{ text: finding, kind: "fact", citations: ["p1"] }] },
+          { label: "Greater loss remains", sentences: [{ text: other, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah pola makan itu menurunkan berat badan?",
+    });
+    const side = result.conflicts.flatMap((conflict) => conflict.sides).find((item) => item.label === "Finds little difference");
+    expect(side?.sentences[0]?.text).toMatch(/little difference/i);
+    expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
+    expect(result.headline).toBe("Bukti yang tersimpan beragam");
+  });
 });

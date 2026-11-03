@@ -1,4 +1,4 @@
-import { appearsVerbatim, assessSupport } from "@/lib/entailment";
+import { appearsVerbatim, assessSupport, statesAbsence } from "@/lib/entailment";
 import { isSiteStat } from "@/lib/passages";
 import type { ModelVerdict } from "@/lib/schema";
 import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, subjectOverlap, uniqueGaps } from "@/lib/text";
@@ -323,13 +323,32 @@ export function adjudicate(input: {
     ...sentence,
     citations: sentence.citations.filter((id) => known.has(id)),
   });
-  const ledeOut = dropThinnerRestatements(lede.map(strip));
-  const sectionsOut = sections.map((section) => ({
+  let ledeOut = dropThinnerRestatements(lede.map(strip));
+  let sectionsOut = sections.map((section) => ({
     ...section,
     sentences: dropThinnerRestatements(section.sentences.map(strip)).filter(
       (sentence) => !ledeOut.some((kept) => isThinnerRestatement(sentence.text, kept.text)),
     ),
   }));
+  if (input.draft.insufficient) {
+    const question = input.question ?? "";
+    const answers = (sentence: Sentence) => statesAbsence(sentence.text) || (question.length > 0 && subjectOverlap(question, sentence.text) >= 2);
+    const parked: Sentence[] = [];
+    const keepLede: Sentence[] = [];
+    for (const sentence of ledeOut) {
+      if (answers(sentence)) keepLede.push(sentence);
+      else parked.push(sentence);
+    }
+    for (const section of sectionsOut) parked.push(...section.sentences);
+    ledeOut = keepLede;
+    sectionsOut = [];
+    for (const sentence of parked) {
+      const key = sentence.text.trim().toLowerCase();
+      if (asideKeys.has(key)) continue;
+      asideKeys.add(key);
+      aside.push(sentence);
+    }
+  }
   let conflictsOut = conflicts.map((conflict) => ({
     ...conflict,
     sides: conflict.sides.map((side) => ({ ...side, sentences: side.sentences.map(strip) })),
@@ -349,9 +368,9 @@ export function adjudicate(input: {
     ...conflict,
     sides: conflict.sides.map((side) => ({
       ...side,
-      sentences: side.sentences.map((sentence) => ({ ...sentence, text: concisePosition(sentence.text, bodyText) })),
+      sentences: side.sentences.map((sentence) => ({ ...sentence, text: concisePosition(sentence.text, bodyText, side.label) })),
     })),
-  }));
+  })).filter((conflict) => !weakDisagreement(conflict.sides));
 
   const keptSentences = [
     ...ledeOut,
@@ -359,7 +378,12 @@ export function adjudicate(input: {
     ...conflictsOut.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences)),
   ];
   let insufficient = input.draft.insufficient;
-  let headline = softenConflictHeadline(input.draft.headline, input.language ?? "en", conflictsOut.some((conflict) => conflict.sides.length >= 2));
+  const disputed = conflictsOut.some((conflict) => conflict.sides.length >= 2);
+  let headline = mixedEvidenceHeadline(
+    softenConflictHeadline(input.draft.headline, input.language ?? "en", disputed),
+    input.language ?? "en",
+    disputed,
+  );
   if (keptSentences.length === 0) {
     insufficient = true;
     gaps.splice(0, gaps.length, ...gaps.filter((gap) => !/passage check|factual sentence remained/i.test(gap)));
@@ -413,6 +437,27 @@ function softenConflictHeadline(headline: string, language: string, hasTwoSidedC
   return /^id\b|indones/i.test(language)
     ? "Sumber yang ada tidak menetapkan satu jawaban"
     : "The stored pages do not settle one answer";
+}
+
+function mixedEvidenceHeadline(headline: string, language: string, hasTwoSidedConflict: boolean): string {
+  if (!hasTwoSidedConflict || CONFLICT_HEADLINE.test(headline) || /beragam|mixed evidence|do not agree|tidak sepakat/i.test(headline)) return headline;
+  return /^id\b|indones/i.test(language) ? "Bukti yang tersimpan beragam" : "The stored evidence is mixed";
+}
+
+const OPINION_CLAIM = /\b(survey|poll|pew|adults|expected|voters|responden|survei|jajak|pendapat)\b/i;
+const MARKET_CLAIM = /\b(odds|kalshi|polymarket|betting|bettors|priced|contract|taruhan)\b/i;
+
+function claimKind(text: string): "opinion" | "market" | "other" {
+  const opinion = OPINION_CLAIM.test(text);
+  const market = MARKET_CLAIM.test(text);
+  if (opinion && !market) return "opinion";
+  if (market && !opinion) return "market";
+  return "other";
+}
+
+function weakDisagreement(sides: { sentences: { text: string }[] }[]): boolean {
+  const kinds = sides.map((side) => claimKind(side.sentences.map((sentence) => sentence.text).join(" ")));
+  return kinds.includes("opinion") && kinds.includes("market");
 }
 
 function headlineFollowsRemoved(headline: string, removed: string[]): boolean {
@@ -494,21 +539,34 @@ function dropThinnerRestatements(sentences: Sentence[]): Sentence[] {
   return sentences.filter((sentence) => !drop.has(sentence.id));
 }
 
-function concisePosition(text: string, body: string[]): string {
+function keepsEveryFigure(short: string, full: string): boolean {
+  const have = new Set(numberTokens(short));
+  return numberTokens(full).every((token) => have.has(token));
+}
+
+function labelAgrees(label: string, text: string): boolean {
+  const little = /little difference|no difference|tidak berbeda|hampir sama|sedikit perbedaan/i;
+  const greater = /significantly greater|jauh lebih|lebih besar/i;
+  if (little.test(label) && greater.test(text) && !little.test(text)) return false;
+  if (greater.test(label) && little.test(text) && !greater.test(text)) return false;
+  return true;
+}
+
+function concisePosition(text: string, body: string[], label = ""): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
-  const words = cleaned.split(" ");
   const repeats = body.some((item) => similarWording(cleaned, item) || claimKey(cleaned) === claimKey(item));
-  if (words.length <= 18 && !repeats) return cleaned;
-  if (words.length <= 12) return cleaned;
-  const pieces = cleaned.split(/,\s+(?:and|but|while|whereas|dan|tetapi|namun|sedangkan)\s+/i);
-  let chosen = (pieces[pieces.length - 1] ?? cleaned).replace(/^(?:that|the claim that)\s+/i, "");
-  let chosenWords = chosen.split(/\s+/);
-  if (chosenWords.length < 6 || chosenWords.length > 18) {
-    chosen = words.slice(-16).join(" ");
-    chosenWords = chosen.split(/\s+/);
+  if (!repeats) return cleaned;
+  const clauses = cleaned.split(/,\s+(?:and|but|while|whereas|dan|tetapi|namun|sedangkan)\s+|(?<=[.!?])\s+/i).map((clause) => clause.trim()).filter(Boolean);
+  const picked: string[] = [];
+  for (const clause of clauses) {
+    if (numberTokens(clause).length === 0 && picked.length > 0) continue;
+    picked.push(clause);
+    if (keepsEveryFigure(picked.join(", and "), cleaned)) break;
   }
-  chosen = `${chosen.charAt(0).toUpperCase()}${chosen.slice(1)}`;
-  return /[.!?]$/.test(chosen) ? chosen : `${chosen.replace(/[,:;]$/, "")}.`;
+  const joined = picked.join(", and ").trim();
+  if (!joined || !keepsEveryFigure(joined, cleaned) || (label && !labelAgrees(label, joined))) return cleaned;
+  const sentence = `${joined.charAt(0).toUpperCase()}${joined.slice(1)}`;
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 const HIGHER_RISK = /\b(meningkat(?:kan)?|menaik(?:kan)?|increase[sd]?|higher|raises|raising)\b/i;
