@@ -139,6 +139,9 @@ const SLUG_BRANDS: Record<string, string> = {
   stikesfa: "LPPM Stikesfa",
   unismuhpalu: "Universitas Muhammadiyah Palu",
   unismuh: "Universitas Muhammadiyah Palu",
+  stikeselisabethmedan: "STIKes Elisabeth Medan",
+  mdpi: "MDPI",
+  veeva: "Veeva",
 };
 
 export function naturalizeSentence(text: string): string {
@@ -151,6 +154,10 @@ export function naturalizeSentence(text: string): string {
   for (const [slug, brand] of Object.entries(SLUG_BRANDS)) {
     next = next.replace(new RegExp(`\\b${escapeRegExp(slug)}\\b`, "gi"), brand);
   }
+  next = next.replace(
+    /\b(?:[a-z0-9-]+\.)+(?:co\.id|ac\.id|or\.id|go\.id|sch\.id|com|org|net|edu|io)\b/gi,
+    (host) => readablePublisher(host),
+  );
   return next.replace(/\s{2,}/g, " ").trim();
 }
 
@@ -297,8 +304,32 @@ export function readablePublisher(name: string, title?: string, url?: string): s
   if (known) return known;
   const hyphen = prettifyHyphen(hostOf(url).split(".")[0] ?? "") || prettifyHyphen(trimmed.toLowerCase());
   if (hyphen) return hyphen;
-  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !isWeakPublisher(trimmed)) return trimmed;
-  return known || "Source";
+  if (trimmed && !looksLikeArticle(trimmed) && !trimmed.includes(".") && !/^(?:source|sumber)$/i.test(trimmed) && !isWeakPublisher(trimmed)) {
+    return trimmed;
+  }
+  const brand = fallbackBrand(url || trimmed) || fallbackBrand(trimmed);
+  if (brand) return brand;
+  if (trimmed && !/^(?:source|sumber)$/i.test(trimmed)) return trimmed;
+  return "the site";
+}
+
+function hostLabels(host: string): string[] {
+  return host.split(".").filter((label) => label && !PUBLISHER_TLDS.has(label) && label !== "www");
+}
+
+function fallbackBrand(raw: string): string | null {
+  if (!raw || /^(?:source|sumber)$/i.test(raw.trim())) return null;
+  const host = hostOf(raw) || raw.trim().toLowerCase().replace(/^www\./, "");
+  const labels = hostLabels(host);
+  if (labels.length === 0) return null;
+  for (const label of labels) {
+    const known = SLUG_BRANDS[label];
+    if (known) return known;
+  }
+  const core = labels[labels.length - 1] ?? "";
+  if (core.length < 2) return null;
+  if (core.length <= 4) return core.toUpperCase();
+  return `${core.charAt(0).toUpperCase()}${core.slice(1)}`;
 }
 
 const REGIONS: string[][] = [

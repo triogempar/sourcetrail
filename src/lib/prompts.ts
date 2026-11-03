@@ -83,6 +83,7 @@ export function verifyPrompt(sentences: PromptSentence[], passages: Passage[], q
       "You check whether each sentence is entailed by its cited passages.",
       "Use only the passages in the prompt. Outside knowledge is not evidence.",
       "Mark unsupported when a number, date, or name in the sentence is absent from the cited passages.",
+      "If the figures and the named actors are in the passage, mark supported. A paraphrase is still supported: 'favoring a Republican Senate win' matches 'favor a Republican Party win for the Senate'.",
       "Mark partial when the passage supports only part of the sentence, including when the sentence widens a dose, population, or condition the source limited.",
       "Inferences may be supported without a verbatim match, but they are unsupported if they add new figures or names.",
       "Set relevant false when the sentence is about a different place, institution, or population than the question, even if the cited text supports the wording.",

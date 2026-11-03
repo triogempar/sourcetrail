@@ -30,9 +30,16 @@ const BOILERPLATE = [
   /privacy preference/i,
 ];
 
+const SITE_STAT = /\b(global rank|world rank|worldwide rank|alexa rank|similarweb|domain authority|monthly visits|bounce rate|peringkat global|peringkat dunia)\b/i;
+
+export function isSiteStat(text: string): boolean {
+  return SITE_STAT.test(text);
+}
+
 export function isBoilerplate(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 40) return false;
+  if (isSiteStat(trimmed) && contentWords(trimmed).length < 80) return true;
   const hits = BOILERPLATE.filter((pattern) => pattern.test(trimmed)).length;
   if (hits >= 2) return true;
   if (hits >= 1 && contentWords(trimmed).length < 80) return true;

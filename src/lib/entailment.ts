@@ -81,6 +81,12 @@ export function assessSupport(sentence: string, passages: string[], metadata = "
   if (missingNames.length > 0 && !hasNgram(words, cleanPassages, 4)) {
     return { level: "unsupported", reason: `${missingNames[0]} is not in the cited passage.` };
   }
+  if (missingNames.length === 0 && numberTokens(cleanSentence).length > 0) {
+    if (overstatesScope(cleanSentence, cleanPassages)) {
+      return { level: "partial", reason: "The source limits the finding to a narrower comparison than the sentence states." };
+    }
+    return { level: "supported", reason: "The cited passage contains the figures and names." };
+  }
   if (grounded) {
     if (overstatesScope(cleanSentence, cleanPassages)) {
       return { level: "partial", reason: "The source limits the finding to a narrower comparison than the sentence states." };

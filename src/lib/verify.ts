@@ -1,4 +1,5 @@
 import { appearsVerbatim, assessSupport } from "@/lib/entailment";
+import { isSiteStat } from "@/lib/passages";
 import type { ModelVerdict } from "@/lib/schema";
 import { canonicalUrl, cleanHeadline, cleanSentence, clip, contentWords, loneAccountHeading, nameInText, naturalizeSentence, numberSatisfied, numberTokens, offTopicReason, properNouns, subjectOverlap, uniqueGaps } from "@/lib/text";
 import type { DraftBrief, DraftSentence, Passage, Sentence, VerificationSummary } from "@/lib/types";
@@ -137,7 +138,10 @@ function judgeSentence(
   if (offTopic && (support.level !== "unsupported" || model === "supported" || verbatim)) {
     return { action: "aside", reason: localOff ?? "The sentence does not answer this question's place or subject." };
   }
-  if (verbatim) return { action: "keep", reason: "The sentence appears in the cited passage." };
+  const figuresNamed = support.reason.startsWith("The cited passage contains the figures");
+  if ((verbatim || figuresNamed) && !offTopic) {
+    return { action: "keep", reason: support.reason };
+  }
   if (support.level === "unsupported") return soften(support.reason, model);
   if (support.level === "partial") {
     if (model === "unsupported") {
@@ -236,6 +240,7 @@ export function adjudicate(input: {
   let droppedOverride = false;
 
   const keep = (sentence: WorkingSentence): Sentence | null => {
+    if (isSiteStat(sentence.text)) return null;
     checked += 1;
     const merged: WorkingSentence = {
       ...sentence,

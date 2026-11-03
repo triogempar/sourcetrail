@@ -88,6 +88,37 @@ describe("assessSupport", () => {
     expect(readablePublisher("stikesfa.ac.id", "Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...")).toBe("LPPM Stikesfa");
     expect(readablePublisher("Pengaruh Konsumsi Kopi Terhadap Peningkatan Tekanan ...", undefined, "https://ejournal.stikesfa.ac.id/index.php/kopi")).toBe("LPPM Stikesfa");
     expect(naturalizeSentence("Jurnal Lppm-stikesfa juga mencatat risiko yang sama.")).toContain("LPPM Stikesfa");
+    for (const [host, brand] of [
+      ["yahoo.com", "Yahoo"],
+      ["medium.com", "Medium"],
+      ["mdpi.com", "MDPI"],
+      ["ctv.veeva.com", "Veeva"],
+      ["diagnos.co.id", "Diagnos"],
+      ["stikeselisabethmedan.ac.id", "STIKes Elisabeth Medan"],
+    ] as const) {
+      expect(readablePublisher(host)).toBe(brand);
+      expect(readablePublisher("Source", undefined, `https://${host}/story`)).toBe(brand);
+    }
+    expect(naturalizeSentence("Sumber diagnos.co.id juga mencatat angka yang sama.")).toBe("Sumber Diagnos juga mencatat angka yang sama.");
+  });
+
+  it("treats matching figures and names as supported when the verb is paraphrased", () => {
+    const senate = assessSupport(
+      "PhillyBurbs reported Kalshi odds of 61% favoring a Republican Senate win.",
+      ["Kalshi priced the race at 61% favor a Republican Party win for the Senate in the midterms 2026."],
+      "PhillyBurbs https://www.phillyburbs.com/kalshi",
+    );
+    const markets = assessSupport(
+      "Polymarket showed 91% and Kalshi at 90%.",
+      ["Polymarket 91%. Kalshi at 90%."],
+    );
+    const campus = assessSupport(
+      "CU Anschutz reported 7.6% versus 5%.",
+      ["CU Anschutz recorded 7.6% vs 5% in the same cohort."],
+    );
+    expect(senate.level).toBe("supported");
+    expect(markets.level).toBe("supported");
+    expect(campus.level).toBe("supported");
   });
 
   it("keeps a missing-evidence sentence that names a place the passage lacks", () => {

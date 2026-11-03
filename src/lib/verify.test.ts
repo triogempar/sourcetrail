@@ -724,4 +724,102 @@ describe("adjudicate", () => {
     expect(fire?.text.length).toBeLessThan(opening.length);
     expect(fire?.text).not.toBe(opening);
   });
+
+  it("keeps a paraphrased odds sentence and does not call it a struck second account", () => {
+    const pages: Passage[] = [{
+      id: "p9",
+      url: "https://www.phillyburbs.com/kalshi",
+      title: "Senate odds",
+      publisher: "PhillyBurbs",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi priced the race at 61% favor a Republican Party win for the Senate in the midterms 2026.",
+    }, {
+      id: "p10",
+      url: "https://example.com/other-poll",
+      title: "Other poll",
+      publisher: "Other Desk",
+      publishedDate: null,
+      origin: "extract",
+      text: "A second desk put the same Republican Senate chance at 58 percent.",
+    }];
+    const draft = tagDraft({
+      headline: "Markets favor a Republican Senate",
+      insufficient: false,
+      lede: [],
+      sections: [],
+      conflicts: [{
+        topic: "Senate odds",
+        sides: [
+          {
+            label: "Kalshi",
+            sentences: [{
+              text: "PhillyBurbs reported Kalshi odds of 61% favoring a Republican Senate win.",
+              kind: "fact",
+              citations: ["p9"],
+            }],
+          },
+          {
+            label: "Other desk",
+            sentences: [{
+              text: "A second desk put the same Republican Senate chance at 58 percent.",
+              kind: "fact",
+              citations: ["p10"],
+            }],
+          },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [
+        { id: "s1", verdict: "unsupported", reason: "wording differs" },
+        { id: "s2", verdict: "supported", reason: "matches" },
+      ],
+      mode: "live",
+      modelError: null,
+      question: "What chance do the markets give a Republican Senate win?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.conflicts.some((conflict) => conflict.sides.length >= 2)).toBe(true);
+    expect(result.gaps.join(" ")).not.toMatch(/second account|dicoret/i);
+    const odds = result.conflicts.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences)).find((sentence) => sentence.text.includes("61"));
+    expect(odds?.flag).toBeUndefined();
+  });
+
+  it("does not park a site-rank sentence in what we found instead", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/braga-tech",
+      title: "Company profile",
+      publisher: "Example",
+      publishedDate: null,
+      origin: "extract",
+      text: "PT Braga Teknologi lists a global rank of 7880232.",
+    }];
+    const draft = tagDraft({
+      headline: "Attendance is not reported",
+      insufficient: true,
+      lede: [{
+        text: "PT Braga Teknologi lists a global rank of 7,880,232.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "company profile" }],
+      mode: "live",
+      modelError: null,
+      question: "How many people attend the chess club at the Braga library?",
+    });
+    expect(result.aside.some((sentence) => /rank|7,880,232|7880232/.test(sentence.text))).toBe(false);
+    expect(result.lede.some((sentence) => /rank|7,880,232/.test(sentence.text))).toBe(false);
+  });
 });
