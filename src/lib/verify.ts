@@ -78,9 +78,11 @@ function familyIds(citations: string[], passages: Passage[]): string[] {
 }
 
 function evidenceTexts(citations: string[], passages: Passage[]): string[] {
-  return familyIds(citations, passages)
-    .map((id) => passages.find((passage) => passage.id === id)?.text)
-    .filter((text): text is string => Boolean(text));
+  return familyIds(citations, passages).flatMap((id) => {
+    const passage = passages.find((item) => item.id === id);
+    if (!passage) return [];
+    return [passage.title, passage.text].filter((text) => text.trim().length > 0);
+  });
 }
 
 function sourceMetadata(passages: Passage[]): string {
@@ -139,6 +141,9 @@ function judgeSentence(
     return { action: "aside", reason: localOff ?? "The sentence does not answer this question's place or subject." };
   }
   const figuresNamed = support.reason.startsWith("The cited passage contains the figures");
+  if (statesAbsence(sentence.text) && support.level === "supported" && !offTopic) {
+    return { action: "keep", reason: support.reason };
+  }
   if ((verbatim || figuresNamed) && !offTopic) {
     return { action: "keep", reason: support.reason };
   }
@@ -403,6 +408,17 @@ export function adjudicate(input: {
     }
   }
 
+  if (!disputed) {
+    const cleanedHeadline = stripMixedClause(headline);
+    if (cleanedHeadline.length >= 12) headline = cleanedHeadline;
+    const cleanProse = (sentence: Sentence): Sentence => {
+      const text = stripMixedClause(sentence.text);
+      return text.length >= 12 ? { ...sentence, text } : sentence;
+    };
+    ledeOut = ledeOut.map(cleanProse);
+    sectionsOut = sectionsOut.map((section) => ({ ...section, sentences: section.sentences.map(cleanProse) }));
+  }
+
   const modelUsed = input.modelVerdicts !== null && input.modelError === null && input.mode === "live";
   return {
     headline,
@@ -410,7 +426,7 @@ export function adjudicate(input: {
     lede: ledeOut,
     sections: sectionsOut,
     conflicts: conflictsOut,
-    gaps: uniqueGaps(gaps),
+    gaps: withStandardGaps(input.question ?? "", input.language ?? "en", uniqueGaps(gaps)),
     aside,
     summary: {
       checked,
@@ -438,6 +454,22 @@ function softenConflictHeadline(headline: string, language: string, hasTwoSidedC
   return /^id\b|indones/i.test(language)
     ? "Sumber yang ada tidak menetapkan satu jawaban"
     : "The stored pages do not settle one answer";
+}
+
+function stripMixedClause(text: string): string {
+  return text
+    .replace(/,?\s*(?:though|although|but|while|meski(?:pun)?|walau(?:pun)?|namun)\s+(?:the\s+)?(?:evidence|bukti)(?:nya)?\s+(?:is\s+|saling\s+)?(?:mixed|beragam|bertentangan|does not agree|tidak sepakat)\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/^[,;\s]+|[,;\s]+$/g, "")
+    .trim();
+}
+
+function withStandardGaps(question: string, language: string, gaps: string[]): string[] {
+  if (gaps.length > 0 || !/\b(polls?|forecasts?|election|senate|pemilu|survei|jajak pendapat)\b/i.test(question)) return gaps;
+  return [/^id\b|indones/i.test(language)
+    ? "Jajak pendapat adalah potret sesaat, bukan ramalan hasil."
+    : "Polls are snapshots, not a forecast of the result."];
 }
 
 function topicPhrase(question: string, conflicts: { topic: string; sides: { sentences: Sentence[] }[] }[]): string {

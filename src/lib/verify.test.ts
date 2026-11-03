@@ -1032,4 +1032,74 @@ describe("adjudicate", () => {
     expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
     expect(result.headline).toBe("Bukti beragam soal weight loss");
   });
+
+  it("keeps a 9-point edge that is stated in the page title", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.reuters.com/ipsos",
+      title: "Democrats hold 9-point edge",
+      publisher: "Reuters",
+      publishedDate: null,
+      origin: "extract",
+      text: "The Reuters/Ipsos poll found Democrats ahead of Republicans among likely voters.",
+    }];
+    const draft = tagDraft({
+      headline: "Democrats lead, though evidence is mixed",
+      insufficient: false,
+      lede: [{
+        text: "The Reuters/Ipsos poll found Democrats holding a 9-point edge.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who leads in the Senate polls?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/9-point edge/);
+    expect(result.headline).toBe("Democrats lead");
+    expect(result.headline).not.toMatch(/mixed/i);
+    expect(result.gaps.join(" ")).toMatch(/snapshots/i);
+  });
+
+  it("keeps an absence statement supported when the model dissents", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/wiki",
+      title: "Vital articles",
+      publisher: "Wikipedia",
+      publishedDate: null,
+      origin: "extract",
+      text: "The list names Braga among geography entries.",
+    }];
+    const claim = "None of the sources states an attendance figure for the Braga library.";
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran",
+      insufficient: true,
+      lede: [{ text: claim, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "unsupported", reason: "not in text" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga?",
+    });
+    const kept = result.lede.find((sentence) => /none of the sources/i.test(sentence.text));
+    expect(kept?.flag).toBeUndefined();
+    expect(result.summary.dropped).toBe(0);
+  });
 });

@@ -104,6 +104,9 @@ describe("assessSupport", () => {
     expect(readablePublisher("cookpolitical.com")).toBe("Cook Political Report");
     expect(readablePublisher("theconversation.com")).toBe("The Conversation");
     expect(readablePublisher("poltekkesjakarta1.ac.id")).toBe("Poltekkes Jakarta I");
+    expect(readablePublisher("www.heart.org")).toBe("American Heart Association");
+    expect(readablePublisher("nbcnews.com")).toBe("NBC News");
+    expect(readablePublisher("Tavily", "Senate poll", "https://www.nbcnews.com/politics/senate")).toBe("NBC News");
     expect(planFrameDetail("id", 4)).toBe("4 jalur pertanyaan. Bahasa: id.");
   });
 
@@ -143,6 +146,15 @@ describe("assessSupport", () => {
       "https://www.facebook.com/massillonlibrary/posts/9 Facebook",
     );
     expect(result.reason).not.toMatch(/Massillon/);
+    expect(result.level).not.toBe("unsupported");
+  });
+
+  it("accepts a figure that appears in the page title", () => {
+    const result = assessSupport(
+      "The Reuters/Ipsos poll found Democrats holding a 9-point edge.",
+      ["Democrats hold 9-point edge in the Reuters/Ipsos poll", "The poll described the race among likely voters."],
+    );
+    expect(result.reason).not.toMatch(/figure 9/);
     expect(result.level).not.toBe("unsupported");
   });
 

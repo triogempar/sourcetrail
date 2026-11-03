@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { briefToMarkdown, citationOrder, groupBySource } from "@/lib/markdown";
+import { absenceNote, briefToMarkdown, citationOrder, groupBySource } from "@/lib/markdown";
 import { takeNdjson } from "@/lib/ndjson";
 import { emptyStream, reduceStream } from "@/lib/stream-state";
 import type { Brief, TrailEntry } from "@/lib/types";
@@ -109,6 +109,7 @@ describe("markdown export", () => {
       ],
     };
     expect(citationOrder(absence)).toEqual([]);
+    expect(absenceNote(absence.lede[0]!, [], "en")).toBe("Based on 2 sources read.");
     const grouped = groupBySource(absence.passages, citationOrder({
       ...absence,
       lede: [{ id: "s1", text: "A Hamburg pilot reported a 612 km highway range.", kind: "fact", citations: ["p2"] }],

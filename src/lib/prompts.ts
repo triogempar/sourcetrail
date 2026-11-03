@@ -75,14 +75,14 @@ export function verifyPrompt(sentences: PromptSentence[], passages: Passage[], q
   const blocks = sentences.map((sentence) => {
     const cited = sentence.citations.map((id) => {
       const passage = passages.find((item) => item.id === id);
-      return passage ? `[${id}] ${passage.text}` : `[${id}] missing passage`;
+      return passage ? `[${id}] title: ${passage.title}\n${passage.text}` : `[${id}] missing passage`;
     }).join("\n");
     return `id: ${sentence.id}\nkind: ${sentence.kind}\ntext: ${sentence.text}\ncited:\n${cited || "(none)"}`;
   }).join("\n\n");
   return {
     system: [
       "You check whether each sentence is entailed by its cited passages.",
-      "Use only the passages in the prompt. Outside knowledge is not evidence.",
+      "Use only the passages in the prompt. Outside knowledge is not evidence. A cited page's title counts as evidence.",
       "Mark unsupported when a number, date, or name in the sentence is absent from the cited passages.",
       "If the figures and the named actors are in the passage, mark supported. A paraphrase is still supported: 'favoring a Republican Senate win' matches 'favor a Republican Party win for the Senate'.",
       "Mark partial when the passage supports only part of the sentence, including when the sentence widens a dose, population, or condition the source limited.",

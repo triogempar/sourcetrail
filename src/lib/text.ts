@@ -145,6 +145,8 @@ const SLUG_BRANDS: Record<string, string> = {
   stikeselisabethmedan: "STIKes Elisabeth Medan",
   mdpi: "MDPI",
   veeva: "Veeva",
+  heart: "American Heart Association",
+  nbcnews: "NBC News",
 };
 
 export function naturalizeSentence(text: string): string {
@@ -357,6 +359,10 @@ function prettifyHyphen(label: string): string | null {
 
 export function readablePublisher(name: string, title?: string, url?: string): string {
   const trimmed = name.trim();
+  if (/^tavily$/i.test(trimmed)) {
+    const fromPage = brandFromHost(hostOf(url)) || fallbackBrand(url || "") || publicationName(title);
+    return fromPage || "the site";
+  }
   if (/^health\s+detik$/i.test(trimmed) || /^detik\s+health$/i.test(trimmed)) return "detikHealth";
   const known = brandFromHost(hostOf(url) || hostOf(trimmed)) || SLUG_BRANDS[trimmed.toLowerCase()] || null;
   if (isHumanPublisher(trimmed)) return trimmed;
@@ -452,6 +458,7 @@ export type BriefLabels = {
   copy: string;
   download: string;
   copied: string;
+  basedOn: (count: number) => string;
   passages: (count: number) => string;
   checked: (count: number) => string;
   unchecked: string;
@@ -478,6 +485,7 @@ export function briefLabels(language: string): BriefLabels {
       copy: "Salin Markdown",
       download: "Unduh",
       copied: "Tersalin",
+      basedOn: (count) => `Berdasarkan ${count} sumber yang dibaca`,
       passages: (count) => `${count} kutipan`,
       checked: (count) => `${count} klaim diperiksa`,
       unchecked: "Belum diperiksa",
@@ -502,6 +510,7 @@ export function briefLabels(language: string): BriefLabels {
     copy: "Copy Markdown",
     download: "Download",
     copied: "Copied",
+    basedOn: (count) => `Based on ${count} ${count === 1 ? "source" : "sources"} read`,
     passages: (count) => `${count} ${count === 1 ? "passage" : "passages"}`,
     checked: (count) => `${count} ${count === 1 ? "claim" : "claims"} checked`,
     unchecked: "Unchecked",

@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { briefToMarkdown, citationOrder, footnoteNumber, groupBySource } from "@/lib/markdown";
-import { briefLabels, formatDate } from "@/lib/text";
+import { absenceNote, briefToMarkdown, citationOrder, footnoteNumber, groupBySource } from "@/lib/markdown";
+import { briefLabels, clip, formatDate } from "@/lib/text";
 import { coerceSentences, type InquiryOutcome } from "@/lib/stream-state";
 import type { Brief, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
@@ -93,6 +93,7 @@ export function BriefView({
               sentence={sentence}
               order={order}
               labels={labels}
+              language={brief.language}
               onCite={onCite}
               activePassageId={activePassageId}
             />
@@ -109,6 +110,7 @@ export function BriefView({
                 sentence={sentence}
                 order={order}
                 labels={labels}
+                language={brief.language}
                 onCite={onCite}
                 activePassageId={activePassageId}
               />
@@ -133,6 +135,7 @@ export function BriefView({
                           sentence={sentence}
                           order={order}
                           labels={labels}
+                          language={brief.language}
                           onCite={onCite}
                           activePassageId={activePassageId}
                         />
@@ -155,6 +158,7 @@ export function BriefView({
                   sentence={sentence}
                   order={order}
                   labels={labels}
+                  language={brief.language}
                   onCite={onCite}
                   activePassageId={activePassageId}
                 />
@@ -274,7 +278,7 @@ function PassageButton({
   const number = footnoteNumber(order, passage.id);
   const prefix = number > 0 ? `${number}. ` : "";
   const label = hidePublisher
-    ? `${prefix}${passage.title}`
+    ? `${prefix}${clip(passage.text, 96)}`
     : `${prefix}${passage.publisher}. ${passage.title}. ${formatDate(passage.publishedDate, language)}`;
   return (
     <button type="button" onClick={() => onCite(passage.id, claim)}>
@@ -287,20 +291,24 @@ function SentenceText({
   sentence,
   order,
   labels,
+  language,
   onCite,
   activePassageId,
 }: {
   sentence: Sentence;
   order: string[];
   labels: ReturnType<typeof briefLabels>;
+  language: string;
   onCite: (passageId: string, claim: string) => void;
   activePassageId: string | null;
 }) {
+  const note = absenceNote(sentence, order, language);
   return (
     <span className={sentence.kind === "inference" ? "sentence inference" : "sentence fact"}>
       {sentence.kind === "inference" ? <span className="kind">{labels.inference}</span> : null}
       {sentence.flag === "partial" ? <span className="kind">{labels.check}</span> : null}
       {sentence.text}
+      {note ? <span className="kind">{note}</span> : null}
       {sentence.citations.map((id) => {
         const number = footnoteNumber(order, id);
         if (number === 0) return null;

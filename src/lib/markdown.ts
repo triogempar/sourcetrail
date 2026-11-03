@@ -63,20 +63,30 @@ export function groupBySource(passages: Passage[], order: string[]): { kept: Sou
   return { kept, unread };
 }
 
-function renderSentence(sentence: Sentence, order: string[], inference: string, check: string): string {
+export function absenceNote(sentence: Sentence, order: string[], language: string): string | null {
+  if (!statesAbsence(sentence.text) || sentence.citations.length === 0) return null;
+  if (sentence.citations.some((id) => footnoteNumber(order, id) > 0)) return null;
+  const count = new Set(sentence.citations).size;
+  return /^id\b|indones/i.test(language)
+    ? `Berdasarkan ${count} sumber yang dibaca.`
+    : `Based on ${count} ${count === 1 ? "source" : "sources"} read.`;
+}
+
+function renderSentence(sentence: Sentence, order: string[], inference: string, check: string, language: string): string {
   const marks = sentence.citations
     .map((id) => footnoteNumber(order, id))
     .filter((number) => number > 0)
     .map((number) => `[^${number}]`)
     .join("");
   const prefix = sentence.kind === "inference" ? `*(${inference})* ` : sentence.flag === "partial" ? `*(${check})* ` : "";
-  return `${prefix}${sentence.text}${marks}`;
+  const note = absenceNote(sentence, order, language);
+  return `${prefix}${sentence.text}${marks}${note ? ` (${note})` : ""}`;
 }
 
 export function briefToMarkdown(brief: Brief, summary: VerificationSummary | null): string {
   const order = citationOrder(brief);
   const labels = briefLabels(brief.language);
-  const sentence = (item: Sentence) => renderSentence(item, order, labels.inference, labels.check);
+  const sentence = (item: Sentence) => renderSentence(item, order, labels.inference, labels.check, brief.language);
   const lines: string[] = [
     `# ${brief.headline}`,
     "",
