@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Passage } from "@/lib/types";
-import { adjudicate, tagDraft } from "@/lib/verify";
+import { adjudicate, isFullSideSentence, tagDraft, topicCase } from "@/lib/verify";
 
 const passages: Passage[] = [
   {
@@ -24,7 +24,7 @@ const passages: Passage[] = [
 ];
 
 describe("adjudicate", () => {
-  it("strikes an unsupported fact even when a model marks it supported", () => {
+  it("keeps a model-supported fact as partial instead of striking it", () => {
     const draft = tagDraft({
       headline: "One Hamburg car posted a 612 km highway range",
       insufficient: false,
@@ -60,10 +60,77 @@ describe("adjudicate", () => {
       mode: "mock",
       modelError: null,
     });
-    expect(result.lede.map((sentence) => sentence.text).join(" ")).not.toMatch(/40/);
-    expect(result.summary.droppedSentences.some((sentence) => sentence.reason.includes("40%"))).toBe(true);
-    expect(result.summary.note).toMatch(/overrode/);
+    const cost = result.lede.find((sentence) => sentence.text.includes("40"));
+    expect(cost?.flag).toBe("partial");
+    expect(result.summary.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(false);
     expect(result.lede.some((sentence) => sentence.kind === "inference")).toBe(true);
+  });
+
+  it("still strikes an invented figure when the model verifier did not run", () => {
+    const draft = tagDraft({
+      headline: "One Hamburg car posted a 612 km highway range",
+      insufficient: false,
+      lede: [{ text: "The pilots have already cut pack cost by 40 percent.", kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+    });
+    expect(result.lede.some((sentence) => sentence.text.includes("40"))).toBe(false);
+    expect(result.lede[0]?.citations).toContain("p1");
+    expect(result.gaps.join(" ")).not.toMatch(/passage check/i);
+    expect(result.summary.droppedSentences.some((sentence) => sentence.reason.includes("40%"))).toBe(true);
+  });
+
+  it("uses a sibling passage from the same page when the citation is the other chunk", () => {
+    const page: Passage[] = [
+      {
+        id: "p9",
+        url: "https://example.com/silver",
+        title: "Numbers",
+        publisher: "Silver Bulletin",
+        publishedDate: "2026-10-01",
+        origin: "extract",
+        text: "The generic ballot stands at D +8.9 and D +9.2 among likely voters.",
+      },
+      {
+        id: "p10",
+        url: "https://example.com/silver",
+        title: "Name",
+        publisher: "Silver Bulletin",
+        publishedDate: "2026-10-01",
+        origin: "extract",
+        text: "Silver Bulletin published the generic ballot on Monday.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Silver Bulletin puts Democrats ahead",
+      insufficient: false,
+      lede: [{
+        text: "Silver Bulletin puts the generic ballot at D +8.9 and D +9.2.",
+        kind: "fact",
+        citations: ["p10"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: page,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+    });
+    expect(result.lede).toHaveLength(1);
+    expect(result.lede[0]?.citations).toEqual(expect.arrayContaining(["p9", "p10"]));
+    expect(result.summary.dropped).toBe(0);
   });
 
   it("drops an inference that invents a figure", () => {
@@ -88,8 +155,10 @@ describe("adjudicate", () => {
       mode: "live",
       modelError: null,
     });
-    expect(result.lede).toHaveLength(0);
+    expect(result.lede.some((sentence) => sentence.text.includes("40"))).toBe(false);
+    expect(result.lede[0]?.citations.length).toBeGreaterThan(0);
     expect(result.insufficient).toBe(true);
+    expect(result.gaps.join(" ")).not.toMatch(/passage check/i);
   });
 
   it("does not present a one-sided conflict as a dispute", () => {
@@ -136,6 +205,34 @@ describe("adjudicate", () => {
     expect(result.summary.note).toMatch(/second model did not finish/i);
   });
 
+  it("does not repeat a sentence under an Indonesian one-sided heading", () => {
+    const shared = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h.";
+    const draft = tagDraft({
+      headline: "Satu mobil Hamburg mencatat jarak 612 km",
+      insufficient: false,
+      lede: [{ text: shared, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Jarak",
+        sides: [
+          { label: "Jarak", sentences: [{ text: shared, kind: "fact", citations: ["p1"] }] },
+          { label: "Biaya", sentences: [{ text: "The pilots have already cut pack cost by 40 percent.", kind: "fact", citations: ["p1"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+    });
+    expect(result.sections.some((section) => section.heading === "Yang tetap tercatat")).toBe(false);
+    expect(result.lede.map((sentence) => sentence.text)).toContain(shared);
+  });
+
   it("lists a repeated struck sentence once", () => {
     const text = "The pilots have already cut pack cost by 40 percent.";
     const draft = tagDraft({
@@ -153,8 +250,1016 @@ describe("adjudicate", () => {
       mode: "live",
       modelError: null,
     });
-    expect(result.summary.droppedSentences.filter((sentence) => sentence.text === text)).toHaveLength(1);
+    expect(result.summary.droppedSentences.filter((sentence) => sentence.text.includes("40"))).toHaveLength(1);
     expect(result.summary.dropped).toBe(1);
     expect(result.gaps.filter((gap) => gap.toLowerCase().includes("price"))).toHaveLength(1);
+  });
+
+  it("moves an off-topic but true sentence out of the answer", () => {
+    const draft = tagDraft({
+      headline: "About 17 people attend the club",
+      insufficient: false,
+      lede: [{
+        text: "A Facebook post said about 17 people attended a library chess club in the United States.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const library: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/facebook",
+      title: "Chess night",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "A Facebook post said about 17 people attended a library chess club in the United States.",
+    }];
+    const result = adjudicate({
+      draft,
+      passages: library,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?",
+    });
+    expect(result.lede.some((sentence) => sentence.text.includes("17"))).toBe(false);
+    expect(result.lede[0]?.citations).toContain("p1");
+    expect(result.lede[0]?.text).toMatch(/Facebook|Chess night/i);
+    expect(result.lede[0]?.text).not.toMatch(/discusses|secara langsung/i);
+    expect(result.aside).toHaveLength(1);
+    expect(result.aside[0]?.text).toMatch(/17/);
+    expect(result.aside[0]?.citations).toContain("p1");
+    expect(result.insufficient).toBe(true);
+    expect(result.headline).toMatch(/Braga/i);
+    expect(result.headline).toMatch(/tidak ada sumber/i);
+    expect(result.gaps.join(" ")).not.toMatch(/passage check|factual sentence remained/i);
+    expect(result.summary.note).toMatch(/Model kedua/i);
+  });
+
+  it("moves a supported sentence the model marks irrelevant", () => {
+    const draft = tagDraft({
+      headline: "Braga employs dozens of people",
+      insufficient: false,
+      lede: [{
+        text: "PT Braga Teknologi employs 40 people at its Bandung office.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const library: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/braga-tech",
+      title: "Headcount",
+      publisher: "PT Braga Teknologi",
+      publishedDate: null,
+      origin: "extract",
+      text: "PT Braga Teknologi employs 40 people at its Bandung office.",
+    }];
+    const result = adjudicate({
+      draft,
+      passages: library,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "company not library" }],
+      mode: "live",
+      modelError: null,
+      question: "How many people attend the chess club at the Braga library in Bandung?",
+    });
+    expect(result.lede.some((sentence) => /40 people/.test(sentence.text))).toBe(false);
+    expect(result.aside[0]?.text).toMatch(/40 people/);
+    expect(result.aside[0]?.citations).toContain("p1");
+  });
+
+  it("shows both risk findings from two chunks of one journal", () => {
+    const journal: Passage[] = [
+      {
+        id: "p7",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Shah et al. found that more than 2 cups a day were linked to a lower risk of hypertension.",
+      },
+      {
+        id: "p8",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Kopi dan risiko hipertensi",
+      insufficient: false,
+      lede: [{
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+        kind: "fact",
+        citations: ["p8"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: journal,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah lebih dari 2 cangkir kopi sehari menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]?.sides).toHaveLength(2);
+    expect(result.conflicts[0]?.topic).toMatch(/berlawanan/i);
+    const sideText = result.conflicts[0]?.sides.map((side) => side.sentences.map((sentence) => sentence.text).join(" ")).join(" ") ?? "";
+    expect(sideText).not.toMatch(/Shah et al/);
+    expect(sideText).not.toContain("dapat meningkatkan faktor risiko hipertensi");
+    expect(sideText).toMatch(/lebih tinggi/);
+    expect(sideText).toMatch(/lebih rendah/);
+  });
+
+  it("keeps a publisher named only in the title or URL", () => {
+    const pages: Passage[] = [{
+      id: "p3",
+      url: "https://repository.undip.ac.id/kopi",
+      title: "Jurnal LPPM Stikesfa",
+      publisher: "Repositori Undip",
+      publishedDate: null,
+      origin: "extract",
+      text: "Risiko hipertensi sekitar 4 kali lebih tinggi pada kelompok tersebut.",
+    }];
+    const draft = tagDraft({
+      headline: "Risiko sekitar empat kali lipat",
+      insufficient: false,
+      lede: [{
+        text: "Jurnal LPPM Stikesfa dan Repositori Undip melaporkan risiko sekitar 4 kali lebih tinggi.",
+        kind: "fact",
+        citations: ["p3"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kali kopi menaikkan risiko hipertensi?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/LPPM Stikesfa/);
+    expect(result.lede[0]?.citations).toContain("p3");
+  });
+
+  it("softens a disagreement headline when the opposing side is gone", () => {
+    const pages: Passage[] = [{
+      id: "p8",
+      url: "https://prin.or.id/kopi-naik",
+      title: "Kopi",
+      publisher: "Jurnal",
+      publishedDate: null,
+      origin: "extract",
+      text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+    }];
+    const kept = "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.";
+    const draft = tagDraft({
+      headline: "Bukti saling bertentangan soal kopi",
+      insufficient: false,
+      lede: [{ text: kept, kind: "fact", citations: ["p8"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko",
+        sides: [
+          { label: "Naik", sentences: [{ text: kept, kind: "fact", citations: ["p8"] }] },
+          { label: "Turun", sentences: [{ text: "Risiko turun 40 persen pada semua orang.", kind: "fact", citations: ["p8"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah kopi menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.headline).not.toMatch(/bertentangan/i);
+    expect(result.headline).toMatch(/tidak menetapkan/i);
+    expect(result.lede.map((sentence) => sentence.text)).toContain(kept);
+  });
+
+  it("keeps the disagree box when retained passages still conflict", () => {
+    const journal: Passage[] = [
+      {
+        id: "p7",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Shah et al. found that more than 2 cups a day were linked to a lower risk of hypertension.",
+      },
+      {
+        id: "p8",
+        url: "https://prin.or.id/kopi",
+        title: "Konsumsi kopi | Jurnal Kedokteran Komunitas",
+        publisher: "prin.or.id",
+        publishedDate: null,
+        origin: "extract",
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Bukti saling bertentangan soal kopi",
+      insufficient: false,
+      lede: [{
+        text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+        kind: "fact",
+        citations: ["p8"],
+      }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko",
+        sides: [
+          {
+            label: "Naik",
+            sentences: [{
+              text: "Lebih dari 2 cangkir per hari dapat meningkatkan faktor risiko hipertensi.",
+              kind: "fact",
+              citations: ["p8"],
+            }],
+          },
+          {
+            label: "Turun",
+            sentences: [{ text: "Risiko turun 40 persen pada semua orang.", kind: "fact", citations: ["p8"] }],
+          },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: journal,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah lebih dari 2 cangkir kopi sehari menaikkan risiko hipertensi?",
+    });
+    expect(result.conflicts.some((conflict) => conflict.sides.length >= 2)).toBe(true);
+    expect(result.headline).toMatch(/bertentangan/i);
+  });
+
+  it("keeps an on-topic adherence sentence, with its citation, in the answer", () => {
+    const pages: Passage[] = [{
+      id: "p6",
+      url: "https://ithy.com/kopi",
+      title: "Pola 4:3",
+      publisher: "Ithy",
+      publishedDate: null,
+      origin: "extract",
+      text: "Ithy menulis bahwa keunggulan pola 4:3 mungkin berasal dari kepatuhan pada konsumsi kopi dan risiko hipertensi.",
+    }];
+    const claim = "Ithy menulis bahwa keunggulan pola 4:3 mungkin berasal dari kepatuhan.";
+    const draft = tagDraft({
+      headline: "Pola 4:3 mungkin unggul karena kepatuhan",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p6"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "adherence aside" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah konsumsi kopi rutin menurunkan risiko hipertensi?",
+    });
+    const kept = result.lede.find((sentence) => sentence.text.includes("4:3"));
+    expect(kept?.citations).toContain("p6");
+    expect(result.aside.some((sentence) => sentence.text.includes("4:3"))).toBe(false);
+  });
+
+  it("keeps an absence statement that names a place missing from the passage", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://facebook.com/massillonlibrary/posts/1",
+      title: "Chess night",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "The club meets on Thursdays at the branch.",
+    }];
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran di perpustakaan Braga",
+      insufficient: true,
+      lede: [{
+        text: "None of the stored sources gives an attendance figure for the chess club at the Braga public library.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "en",
+      question: "How many people attend the chess club at the Braga public library?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/Braga public library/);
+    expect(result.headline).toMatch(/perpustakaan Braga|Braga public library|Tidak ada angka/i);
+  });
+
+  it("matches a library name to the URL slug", () => {
+    const pages: Passage[] = [{
+      id: "p4",
+      url: "https://www.facebook.com/massillonlibrary/posts/9",
+      title: "Thursday club",
+      publisher: "Facebook",
+      publishedDate: null,
+      origin: "extract",
+      text: "The club meets on Thursdays at the branch.",
+    }];
+    const claim = "The Facebook post from Massillon Public Library said the club meets on Thursdays.";
+    const draft = tagDraft({
+      headline: "The club meets on Thursdays",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p4"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: true, reason: "matches" }],
+      mode: "live",
+      modelError: null,
+      question: "When does the Massillon Public Library chess club meet?",
+    });
+    expect(result.summary.droppedSentences.some((sentence) => /Massillon/i.test(sentence.reason))).toBe(false);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/Massillon Public Library/);
+  });
+
+  it("treats a verbatim sentence as supported even when the model dissents", () => {
+    const pages: Passage[] = [{
+      id: "p9",
+      url: "https://example.com/kalshi",
+      title: "Senate market",
+      publisher: "Kalshi",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi showed 61 percent favoring a Republican Senate win.",
+    }];
+    const claim = "Kalshi showed 61 percent favoring a Republican Senate win.";
+    const draft = tagDraft({
+      headline: "Kalshi favors a Republican Senate",
+      insufficient: false,
+      lede: [{ text: claim, kind: "fact", citations: ["p9"] }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "partial", reason: "narrow" }],
+      mode: "live",
+      modelError: null,
+      question: "Who does Kalshi favor in the Senate?",
+    });
+    const kept = result.lede.find((sentence) => sentence.text.includes("61"));
+    expect(kept).toBeTruthy();
+    expect(kept?.flag).toBeUndefined();
+  });
+
+  it("drops a margin sentence that only restates a published pair", () => {
+    const pages: Passage[] = [{
+      id: "p2",
+      url: "https://www.nytimes.com/siena",
+      title: "NYT/Siena poll",
+      publisher: "nytimes.com",
+      publishedDate: null,
+      origin: "extract",
+      text: "The NYT/Siena poll found Democrats ahead of Republicans 52 to 41, a lead of 11 percentage points.",
+    }];
+    const draft = tagDraft({
+      headline: "NYT/Siena has Democrats ahead",
+      insufficient: false,
+      lede: [
+        { text: "The NYT/Siena poll found Democrats ahead of Republicans 52 to 41.", kind: "fact", citations: ["p2"] },
+        { text: "The lead is 11 percentage points.", kind: "fact", citations: ["p2"] },
+      ],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "What is the NYT/Siena margin?",
+    });
+    expect(result.lede.some((sentence) => sentence.text.includes("52"))).toBe(true);
+    expect(result.lede.some((sentence) => sentence.text.includes("11"))).toBe(false);
+  });
+
+  it("summarizes a disagreement side that repeats the opening", () => {
+    const opening = "Grid operator notes released that afternoon attributed the 9 September 2026 disturbance to a transformer fire at the Caceres substation, and the operator called the fire the start of the outage.";
+    const other = "A separate engineering memo argued the disturbance began with a frequency trip in a cluster of solar inverters in Alentejo, and that the Caceres fire was a consequence rather than the trigger.";
+    const draft = tagDraft({
+      headline: "Reports do not agree on the Iberian grid trigger",
+      insufficient: false,
+      lede: [{ text: opening, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Trigger",
+        sides: [
+          { label: "Fire", sentences: [{ text: opening, kind: "fact", citations: ["p1"] }] },
+          { label: "Inverters", sentences: [{ text: other, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const pages: Passage[] = [
+      { id: "p1", url: "https://example.com/fire", title: "Fire", publisher: "Iberian Dispatch", publishedDate: null, origin: "extract", text: opening },
+      { id: "p2", url: "https://example.com/memo", title: "Memo", publisher: "Peninsula Power Review", publishedDate: null, origin: "extract", text: other },
+    ];
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "What triggered the Iberian grid disturbance?",
+    });
+    const fire = result.conflicts[0]?.sides.find((side) => side.label === "Fire")?.sentences[0];
+    expect(fire?.citations).toContain("p1");
+    expect(fire?.text.length).toBeLessThan(opening.length);
+    expect(fire?.text).not.toBe(opening);
+  });
+
+  it("keeps a paraphrased odds sentence and does not call it a struck second account", () => {
+    const pages: Passage[] = [{
+      id: "p9",
+      url: "https://www.phillyburbs.com/kalshi",
+      title: "Senate odds",
+      publisher: "PhillyBurbs",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi priced the race at 61% favor a Republican Party win for the Senate in the midterms 2026.",
+    }, {
+      id: "p10",
+      url: "https://example.com/other-poll",
+      title: "Other poll",
+      publisher: "Other Desk",
+      publishedDate: null,
+      origin: "extract",
+      text: "A second desk put the same Republican Senate chance at 58 percent.",
+    }];
+    const draft = tagDraft({
+      headline: "Markets favor a Republican Senate",
+      insufficient: false,
+      lede: [],
+      sections: [],
+      conflicts: [{
+        topic: "Senate odds",
+        sides: [
+          {
+            label: "Kalshi",
+            sentences: [{
+              text: "PhillyBurbs reported Kalshi odds of 61% favoring a Republican Senate win.",
+              kind: "fact",
+              citations: ["p9"],
+            }],
+          },
+          {
+            label: "Other desk",
+            sentences: [{
+              text: "A second desk put the same Republican Senate chance at 58 percent.",
+              kind: "fact",
+              citations: ["p10"],
+            }],
+          },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [
+        { id: "s1", verdict: "unsupported", reason: "wording differs" },
+        { id: "s2", verdict: "supported", reason: "matches" },
+      ],
+      mode: "live",
+      modelError: null,
+      question: "What chance do the markets give a Republican Senate win?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.conflicts.some((conflict) => conflict.sides.length >= 2)).toBe(true);
+    expect(result.gaps.join(" ")).not.toMatch(/second account|dicoret/i);
+    const odds = result.conflicts.flatMap((conflict) => conflict.sides.flatMap((side) => side.sentences)).find((sentence) => sentence.text.includes("61"));
+    expect(odds?.flag).toBeUndefined();
+  });
+
+  it("does not park a site-rank sentence in what we found instead", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/braga-tech",
+      title: "Company profile",
+      publisher: "Example",
+      publishedDate: null,
+      origin: "extract",
+      text: "PT Braga Teknologi lists a global rank of 7880232.",
+    }];
+    const draft = tagDraft({
+      headline: "Attendance is not reported",
+      insufficient: true,
+      lede: [{
+        text: "PT Braga Teknologi lists a global rank of 7,880,232.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "supported", relevant: false, reason: "company profile" }],
+      mode: "live",
+      modelError: null,
+      question: "How many people attend the chess club at the Braga library?",
+    });
+    expect(result.aside.some((sentence) => /rank|7,880,232|7880232/.test(sentence.text))).toBe(false);
+    expect(result.lede.some((sentence) => /rank|7,880,232/.test(sentence.text))).toBe(false);
+  });
+
+  it("parks off-topic nearest-source facts in the aside when evidence is insufficient", () => {
+    const pages: Passage[] = [
+      {
+        id: "p1",
+        url: "https://en.wikipedia.org/wiki/Vital_articles",
+        title: "Vital articles",
+        publisher: "Wikipedia",
+        publishedDate: null,
+        origin: "extract",
+        text: "The vital-articles list names Braga and Bandung among its geography entries.",
+      },
+      {
+        id: "p2",
+        url: "https://example.com/braga-it",
+        title: "Company",
+        publisher: "Example",
+        publishedDate: null,
+        origin: "extract",
+        text: "The Braga IT company reports a headcount of 59.",
+      },
+      {
+        id: "p3",
+        url: "https://www.myfonts.com/fonts/braga",
+        title: "Athletic lettering faces",
+        publisher: "Athletic lettering faces",
+        publishedDate: null,
+        origin: "extract",
+        text: "Braga and Braga Huis are typefaces in this family.",
+      },
+    ];
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran di perpustakaan Braga",
+      insufficient: true,
+      lede: [{
+        text: "None of the stored sources gives an attendance figure for the chess club at the Braga public library.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [{
+        heading: "What the nearest sources cover",
+        sentences: [
+          { text: "The vital-articles list names Braga and Bandung among its geography entries.", kind: "fact", citations: ["p1"] },
+          { text: "The Braga IT company reports a headcount of 59.", kind: "fact", citations: ["p2"] },
+          { text: "Braga and Braga Huis are typefaces in this family.", kind: "fact", citations: ["p3"] },
+        ],
+      }],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [
+        { id: "s1", verdict: "supported", relevant: true, reason: "gap" },
+        { id: "s2", verdict: "supported", relevant: true, reason: "list" },
+        { id: "s3", verdict: "supported", relevant: true, reason: "headcount" },
+        { id: "s4", verdict: "supported", relevant: true, reason: "font" },
+      ],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga, Bandung?",
+    });
+    const body = [...result.lede, ...result.sections.flatMap((section) => section.sentences)].map((sentence) => sentence.text).join(" ");
+    expect(result.sections).toHaveLength(0);
+    expect(body).not.toMatch(/vital-articles|headcount|typefaces/i);
+    expect(body).toMatch(/attendance figure|Braga public library/i);
+    expect(result.aside.map((sentence) => sentence.text).join(" ")).toMatch(/headcount/);
+    expect(result.aside.map((sentence) => sentence.text).join(" ")).toMatch(/typefaces/);
+  });
+
+  it("keeps both survey figures in a disagreement side", () => {
+    const full = "Pew found that 46% of all U.S. adults expected Democrats to win the Senate and 48% expected Republicans.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.pewresearch.org/senate",
+      title: "Expectations",
+      publisher: "Pew Research Center",
+      publishedDate: null,
+      origin: "extract",
+      text: full,
+    }, {
+      id: "p2",
+      url: "https://www.example.com/other-poll",
+      title: "Other poll",
+      publisher: "Other Poll",
+      publishedDate: null,
+      origin: "extract",
+      text: "Another national survey found 51% of adults expected Republicans to win the Senate and 44% expected Democrats.",
+    }];
+    const draft = tagDraft({
+      headline: "Surveys split on the Senate",
+      insufficient: false,
+      lede: [{ text: full, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Who adults expect to win the Senate",
+        sides: [
+          { label: "Pew", sentences: [{ text: full, kind: "fact", citations: ["p1"] }] },
+          { label: "Other poll", sentences: [{ text: "Another national survey found 51% of adults expected Republicans to win the Senate and 44% expected Democrats.", kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who do U.S. adults expect to win the Senate?",
+    });
+    const pew = result.conflicts.flatMap((conflict) => conflict.sides).find((side) => side.label === "Pew")?.sentences[0]?.text ?? "";
+    expect(pew).toMatch(/46%/);
+    expect(pew).toMatch(/48%/);
+    expect(result.conflicts.length).toBeGreaterThan(0);
+  });
+
+  it("omits a disagreement that pairs a survey with betting odds", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.pewresearch.org/senate",
+      title: "Expectations",
+      publisher: "Pew Research Center",
+      publishedDate: null,
+      origin: "extract",
+      text: "Pew found that 46% of adults expected Democrats to win the Senate.",
+    }, {
+      id: "p9",
+      url: "https://kalshi.com/senate",
+      title: "Odds",
+      publisher: "Kalshi",
+      publishedDate: null,
+      origin: "extract",
+      text: "Kalshi showed 61% favoring a Republican Senate win.",
+    }];
+    const draft = tagDraft({
+      headline: "Surveys split on the Senate",
+      insufficient: false,
+      lede: [{ text: "Pew found that 46% of adults expected Democrats to win the Senate.", kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Senate outlook",
+        sides: [
+          { label: "Pew", sentences: [{ text: "Pew found that 46% of adults expected Democrats to win the Senate.", kind: "fact", citations: ["p1"] }] },
+          { label: "Kalshi", sentences: [{ text: "Kalshi showed 61% favoring a Republican Senate win.", kind: "fact", citations: ["p9"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who is favored to win the Senate?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it("keeps a little-difference label attached to the full finding", () => {
+    const finding = "The trial finds little difference at one year, though early months showed significantly greater weight loss, and the advantage was largely gone beyond six months.";
+    const other = "A second trial reported significantly greater weight loss that remained at one year.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/trial-a",
+      title: "Trial A",
+      publisher: "Journal A",
+      publishedDate: null,
+      origin: "extract",
+      text: finding,
+    }, {
+      id: "p2",
+      url: "https://example.com/trial-b",
+      title: "Trial B",
+      publisher: "Journal B",
+      publishedDate: null,
+      origin: "extract",
+      text: other,
+    }];
+    const draft = tagDraft({
+      headline: "Satu studi menunjukkan penurunan berat badan",
+      insufficient: false,
+      lede: [{ text: finding, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Uji pertama", sentences: [{ text: finding, kind: "fact", citations: ["p1"] }] }],
+      conflicts: [{
+        topic: "Weight loss",
+        sides: [
+          { label: "Finds little difference", sentences: [{ text: finding, kind: "fact", citations: ["p1"] }] },
+          { label: "Greater loss remains", sentences: [{ text: other, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Apakah pola makan itu menurunkan berat badan?",
+    });
+    const side = result.conflicts.flatMap((conflict) => conflict.sides).find((item) => item.label === "Finds little difference");
+    expect(side?.sentences[0]?.text).toMatch(/little difference/i);
+    expect(side?.sentences[0]?.text).not.toMatch(/^significantly greater/i);
+    expect(result.headline).toBe("Bukti beragam soal weight loss");
+  });
+
+  it("keeps a 9-point edge that is stated in the page title", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.reuters.com/ipsos",
+      title: "Democrats hold 9-point edge",
+      publisher: "Reuters",
+      publishedDate: null,
+      origin: "extract",
+      text: "The Reuters/Ipsos poll found Democrats ahead of Republicans among likely voters.",
+    }];
+    const draft = tagDraft({
+      headline: "Democrats lead, though evidence is mixed",
+      insufficient: false,
+      lede: [{
+        text: "The Reuters/Ipsos poll found Democrats holding a 9-point edge.",
+        kind: "fact",
+        citations: ["p1"],
+      }],
+      sections: [],
+      conflicts: [],
+      gaps: [],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "Who leads in the Senate polls?",
+    });
+    expect(result.summary.dropped).toBe(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/9-point edge/);
+    expect(result.headline).toBe("Democrats lead");
+    expect(result.headline).not.toMatch(/mixed/i);
+    expect(result.gaps.join(" ")).toMatch(/snapshots/i);
+  });
+
+  it("keeps an absence statement supported when the model dissents", () => {
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://example.com/wiki",
+      title: "Vital articles",
+      publisher: "Wikipedia",
+      publishedDate: null,
+      origin: "extract",
+      text: "The list names Braga among geography entries.",
+    }];
+    const claim = "None of the sources states an attendance figure for the Braga library.";
+    const draft = tagDraft({
+      headline: "Tidak ada angka kehadiran",
+      insufficient: true,
+      lede: [{ text: claim, kind: "fact", citations: ["p1"] }],
+      sections: [],
+      conflicts: [],
+      gaps: ["No attendance count was published."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: [{ id: "s1", verdict: "unsupported", reason: "not in text" }],
+      mode: "live",
+      modelError: null,
+      language: "id",
+      question: "Berapa kehadiran klub catur di perpustakaan Braga?",
+    });
+    const kept = result.lede.find((sentence) => /none of the sources/i.test(sentence.text));
+    expect(kept?.flag).toBeUndefined();
+    expect(result.summary.dropped).toBe(0);
+  });
+
+  it("writes a range instead of a disagreement when polls agree who leads", () => {
+    const nyt = "NYT/Siena found Democrats ahead by 11 points among likely voters.";
+    const nbc = "NBC found Democrats ahead by 7 points among registered voters.";
+    const pages: Passage[] = [{
+      id: "p1",
+      url: "https://www.nytimes.com/siena",
+      title: "NYT/Siena",
+      publisher: "New York Times",
+      publishedDate: null,
+      origin: "extract",
+      text: nyt,
+    }, {
+      id: "p2",
+      url: "https://www.nbcnews.com/poll",
+      title: "NBC poll",
+      publisher: "NBC News",
+      publishedDate: null,
+      origin: "extract",
+      text: nbc,
+    }];
+    const draft = tagDraft({
+      headline: "Mixed evidence on democratic ballot lead size",
+      insufficient: false,
+      lede: [{ text: nyt, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "NBC", sentences: [{ text: nbc, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Democratic ballot lead size",
+        sides: [
+          { label: "NYT/Siena", sentences: [{ text: nyt, kind: "fact", citations: ["p1"] }] },
+          { label: "NBC", sentences: [{ text: nbc, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: ["Polls are snapshots, not a forecast of the result."],
+    });
+    const result = adjudicate({
+      draft,
+      passages: pages,
+      modelVerdicts: null,
+      mode: "live",
+      modelError: null,
+      question: "How large is the Democratic ballot lead?",
+    });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.lede.map((sentence) => sentence.text).join(" ")).toMatch(/between 7 and 11 points/);
+    expect(result.headline).not.toMatch(/mixed evidence/i);
+    expect(result.headline.charAt(0)).toBe(result.headline.charAt(0).toUpperCase());
+  });
+
+  it("rejects the number-only disagree sides from round 12", () => {
+    expect(isFullSideSentence("Fasting edge: 2025 and 4 and 3 and 12.", "Fasting edge")).toBe(false);
+    expect(isFullSideSentence("Little difference: 2025.", "Little difference")).toBe(false);
+    expect(isFullSideSentence("Meningkatkan risiko: 2.", "Meningkatkan risiko")).toBe(false);
+    expect(isFullSideSentence("Repository UNDIP menyatakan subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi.", "Meningkatkan risiko")).toBe(true);
+  });
+
+  const fastingPages: Passage[] = [{
+    id: "p1",
+    url: "https://medium.com/fasting",
+    title: "Fasting trial",
+    publisher: "Medium",
+    publishedDate: null,
+    origin: "extract",
+    text: "A 2025 Annals of Internal Medicine trial found 4:3 intermittent fasting produced just under 3 kg more weight loss than daily restriction over 12 months.",
+  }, {
+    id: "p2",
+    url: "https://www.cuanschutz.edu/news",
+    title: "Little difference",
+    publisher: "CU Anschutz",
+    publishedDate: null,
+    origin: "extract",
+    text: "A 2025 review found little difference in weight loss between intermittent fasting and daily calorie restriction over 12 months.",
+  }];
+  const fastingEdge = "A 2025 Annals of Internal Medicine trial found 4:3 intermittent fasting produced just under 3 kg more weight loss than daily restriction over 12 months.";
+  const littleDifference = "A 2025 review found little difference in weight loss between intermittent fasting and daily calorie restriction over 12 months.";
+
+  it("keeps full original sentences on both disagree sides even when they repeat the body", () => {
+    const draft = tagDraft({
+      headline: "Mixed evidence on whether intermittent fasting outperforms daily calorie restriction",
+      insufficient: false,
+      lede: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Reviews", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Whether intermittent fasting outperforms daily calorie restriction for long-term weight loss",
+        sides: [
+          { label: "Fasting edge", sentences: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }] },
+          { label: "Little difference", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: fastingPages, modelVerdicts: null, mode: "live", modelError: null, question: "Is intermittent fasting more effective than daily calorie restriction for long-term weight loss?" });
+    expect(result.conflicts).toHaveLength(1);
+    const texts = result.conflicts[0]!.sides.map((side) => side.sentences.map((sentence) => sentence.text).join(" "));
+    expect(texts).not.toContain("Fasting edge: 2025 and 4 and 3 and 12.");
+    expect(texts).not.toContain("Little difference: 2025.");
+    for (const text of texts) expect(isFullSideSentence(text)).toBe(true);
+    expect(texts[0]).toMatch(/Annals of Internal Medicine/);
+    expect(texts[1]).toMatch(/little difference/);
+  });
+
+  it("drops the disagree box when a side is only a label and a figure", () => {
+    const draft = tagDraft({
+      headline: "Mixed evidence on whether intermittent fasting outperforms daily calorie restriction",
+      insufficient: false,
+      lede: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }],
+      sections: [{ heading: "Reviews", sentences: [{ text: littleDifference, kind: "fact", citations: ["p2"] }] }],
+      conflicts: [{
+        topic: "Whether intermittent fasting outperforms daily calorie restriction",
+        sides: [
+          { label: "Fasting edge", sentences: [{ text: fastingEdge, kind: "fact", citations: ["p1"] }] },
+          { label: "Little difference", sentences: [{ text: "Little difference: 2025.", kind: "fact", citations: ["p2"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: fastingPages, modelVerdicts: null, mode: "live", modelError: null, question: "Is intermittent fasting more effective than daily calorie restriction for long-term weight loss?" });
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.headline).not.toMatch(/mixed evidence/i);
+  });
+
+  it("drops a number-only line but keeps the full sentence on the same side", () => {
+    const undip = "Repository UNDIP menyatakan subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi 4,11 kali lebih tinggi dibandingkan subjek yang tidak minum kopi.";
+    const halodoc = "Halodoc menyatakan konsumsi kopi harian tidak mungkin memiliki dampak signifikan pada tekanan darah orang dengan tekanan darah tinggi.";
+    const pages: Passage[] = [{
+      id: "p1", url: "https://eprints.undip.ac.id/kopi", title: "Kopi dan hipertensi", publisher: "Repository UNDIP", publishedDate: null, origin: "extract",
+      text: "Subjek yang mengkonsumsi kopi 1-2 cangkir per hari meningkatkan risiko hipertensi 4,11 kali lebih tinggi dibandingkan subjek yang tidak minum kopi.",
+    }, {
+      id: "p2", url: "https://www.halodoc.com/kopi", title: "Kopi", publisher: "Halodoc", publishedDate: null, origin: "extract",
+      text: "Konsumsi kopi harian tidak mungkin memiliki dampak signifikan pada tekanan darah orang dengan tekanan darah tinggi.",
+    }];
+    const draft = tagDraft({
+      headline: "Kopi dan tekanan darah",
+      insufficient: false,
+      lede: [{ text: halodoc, kind: "fact", citations: ["p2"] }],
+      sections: [],
+      conflicts: [{
+        topic: "Risiko hipertensi dari kebiasaan minum kopi harian",
+        sides: [
+          { label: "Tidak meningkatkan risiko", sentences: [{ text: halodoc, kind: "fact", citations: ["p2"] }] },
+          { label: "Meningkatkan risiko", sentences: [{ text: "Meningkatkan risiko: 2.", kind: "fact", citations: ["p1"] }, { text: undip, kind: "fact", citations: ["p1"] }] },
+        ],
+      }],
+      gaps: [],
+    });
+    const result = adjudicate({ draft, passages: pages, modelVerdicts: null, mode: "live", modelError: null, language: "id", question: "Apakah minum kopi setiap hari meningkatkan risiko darah tinggi?" });
+    const side = result.conflicts[0]?.sides.find((item) => item.label === "Meningkatkan risiko");
+    expect(side?.sentences.map((sentence) => sentence.text)).not.toContain("Meningkatkan risiko: 2.");
+    expect(side?.sentences[0]?.text).toMatch(/Repository UNDIP/);
+    expect(result.headline).toBe("Bukti beragam soal risiko hipertensi dari kebiasaan minum kopi harian");
+  });
+
+  it("lowercases the topic after the mixed-evidence prefix unless it is a proper noun", () => {
+    expect(`Mixed evidence on ${topicCase("Whether intermittent fasting outperforms daily calorie restriction for long-term weight loss")}`)
+      .toBe("Mixed evidence on whether intermittent fasting outperforms daily calorie restriction for long-term weight loss");
+    expect(`Bukti beragam soal ${topicCase("Risiko hipertensi dari kebiasaan minum kopi harian")}`)
+      .toBe("Bukti beragam soal risiko hipertensi dari kebiasaan minum kopi harian");
+    expect(topicCase("NYT and NBC lead estimates")).toBe("NYT and NBC lead estimates");
+    expect(topicCase("Democratic lead size", "Polls show a Democratic lead.")).toBe("Democratic lead size");
   });
 });

@@ -1,11 +1,11 @@
 import { CreditLedger, extractCreditCost } from "@/lib/credits";
 import { isAbort, isTerminalProviderError, providerMessage, SchemaError } from "@/lib/errors";
-import { completeJson } from "@/lib/json";
+import { asCompletion, completeJson } from "@/lib/json";
 import { buildPassages } from "@/lib/passages";
 import { planPrompt, rewritePrompt, verifyPrompt, writePrompt } from "@/lib/prompts";
-import { parseDraft, parsePlan, parseRewrite, readVerdicts, type ModelVerdict } from "@/lib/schema";
+import { parseDraft, parsePlan, parseRewrite, readVerdicts, salvageDraft, type ModelVerdict } from "@/lib/schema";
 import { isUsableHit, isWeak, selectSources } from "@/lib/sources";
-import { clip, heuristicRewrite, publisherFromUrl, uniqueGaps } from "@/lib/text";
+import { clip, heuristicRewrite, planFrameDetail, planFrameTitle, publisherFromUrl, readablePublisher, recencyDetail, uniqueGaps } from "@/lib/text";
 import type {
   AgentDeps,
   Brief,
@@ -76,8 +76,8 @@ export async function runResearch(
         id: "plan-frame",
         phase: "plan",
         status: "info",
-        title: plan.recency ? `Time range: ${plan.timeRange ?? "month"}` : "No time filter",
-        detail: `${plan.subquestions.length} lines of inquiry. Language: ${plan.language}.`,
+        title: planFrameTitle(plan.language, plan.recency, plan.timeRange),
+        detail: planFrameDetail(plan.language, plan.subquestions.length),
       },
     });
     for (const subquestion of plan.subquestions) {
@@ -89,7 +89,7 @@ export async function runResearch(
           status: "ok",
           title: subquestion.question,
           query: subquestion.query,
-          detail: subquestion.needsRecency ? "Recent sources preferred." : "No recency filter on this line.",
+          detail: recencyDetail(plan.language, subquestion.needsRecency),
         },
       });
     }
@@ -178,7 +178,7 @@ export async function runResearch(
             {
               title: note.title,
               url: note.url,
-              publisher: publisherFromUrl(note.url),
+              publisher: readablePublisher(publisherFromUrl(note.url)),
               decision: note.status === "failed" ? "failed" : "kept",
               reason: note.detail,
             },
@@ -243,6 +243,7 @@ export async function runResearch(
       maxTokens: deps.tokens.write,
       signal,
       validate: parseDraft,
+      recover: salvageDraft,
     });
     emit({
       type: "trail",
@@ -261,18 +262,20 @@ export async function runResearch(
     let modelError: string | null = null;
     emit({ type: "phase", phase: "verify", message: "Checking each sentence against its passage" });
     if (facts.length > 0) {
-      const collected = [];
+      const collected: ModelVerdict[] = [];
       const problems: string[] = [];
-      for (let index = 0; index < facts.length; index += 8) {
-        const batch = facts.slice(index, index + 8);
-        throwIfAborted(signal);
+      const batches: ReturnType<typeof listWorkingSentences>[] = [];
+      for (let index = 0; index < facts.length; index += 8) batches.push(facts.slice(index, index + 8));
+      const settled = await Promise.all(batches.map(async (batch) => {
         try {
-          collected.push(...await verifyBatch(batch, passages));
+          return await verifyBatch(batch, passages);
         } catch (error) {
           if (isAbort(error) || isTerminalProviderError(error)) throw error;
           problems.push(providerMessage(error));
+          return [] as ModelVerdict[];
         }
-      }
+      }));
+      for (const verdicts of settled) collected.push(...verdicts);
       if (collected.length > 0) modelVerdicts = collected;
       else if (problems[0]) {
         modelError = problems[0];
@@ -295,6 +298,8 @@ export async function runResearch(
       modelVerdicts,
       mode: deps.mode,
       modelError,
+      language: plan.language,
+      question,
     });
     const gaps = uniqueGaps([...adjudicated.gaps, ...searchGaps]);
     const brief: Brief = {
@@ -306,6 +311,7 @@ export async function runResearch(
       sections: adjudicated.sections,
       conflicts: adjudicated.conflicts,
       gaps,
+      aside: adjudicated.aside,
       searched: searchedLog,
       passages,
       models: { ...deps.models, mode: deps.mode },
@@ -341,7 +347,7 @@ export async function runResearch(
   }
 
   async function verifyBatch(batch: ReturnType<typeof listWorkingSentences>, sourcePassages: Passage[]): Promise<ModelVerdict[]> {
-    const pair = verifyPrompt(batch, sourcePassages);
+    const pair = verifyPrompt(batch, sourcePassages, question);
     const maxTokens = Math.min(deps.tokens.verify, 240 + batch.length * 80);
     const ask = (user: string) => deps.llm.complete({
       task: "verify",
@@ -351,11 +357,11 @@ export async function runResearch(
       maxTokens,
       signal,
     });
-    const first = await ask(pair.user);
-    const parsed = readVerdicts(first);
+    const first = asCompletion(await ask(pair.user));
+    const parsed = readVerdicts(first.content);
     if (parsed.length > 0) return parsed;
-    const second = await ask(`${pair.user}\n\nYour previous reply was truncated or invalid. Reply with one JSON object only. Each reason is at most 8 words.\n\nPrevious reply:\n${clip(first, 1200)}`);
-    const repaired = readVerdicts(second);
+    const second = asCompletion(await ask(`${pair.user}\n\nYour previous reply was truncated or invalid. Reply with one JSON object only. Each reason is at most 8 words.\n\nPrevious reply:\n${clip(first.content, 1200)}`));
+    const repaired = readVerdicts(second.content);
     if (repaired.length > 0) return repaired;
     throw new SchemaError("The model returned invalid JSON twice.");
   }
@@ -542,6 +548,7 @@ function blankBrief(
     sections: [],
     conflicts: [],
     gaps: gaps.length > 0 ? gaps : ["No retrieved passage states an answer to the question."],
+    aside: [],
     searched,
     passages: [],
     models: { ...deps.models, mode: deps.mode },

@@ -1,4 +1,4 @@
-import { canonicalUrl, publisherFromUrl } from "@/lib/text";
+import { canonicalUrl, publisherFromUrl, readablePublisher } from "@/lib/text";
 import type { SearchHit } from "@/lib/types";
 
 export type SelectedHit = SearchHit & {
@@ -28,7 +28,7 @@ export function selectSources(
       const row: SelectedHit = {
         ...hit,
         url,
-        publisher: hit.publisher || publisherFromUrl(hit.url),
+        publisher: readablePublisher(hit.publisher || publisherFromUrl(hit.url), hit.title, hit.url),
         subquestionId: group.subquestionId,
         decision: "kept",
         reason: "Selected to read",

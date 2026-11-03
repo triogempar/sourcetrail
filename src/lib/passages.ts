@@ -1,5 +1,5 @@
 import type { SelectedHit } from "@/lib/sources";
-import { canonicalUrl, clip, contentWords, publisherFromUrl } from "@/lib/text";
+import { canonicalUrl, clip, contentWords, publisherFromUrl, readablePublisher } from "@/lib/text";
 import type { ExtractResult, Passage } from "@/lib/types";
 
 export type ReadNote = {
@@ -30,9 +30,32 @@ const BOILERPLATE = [
   /privacy preference/i,
 ];
 
+const SITE_STAT = /\b(global rank|world rank|worldwide rank|alexa rank|similarweb|domain authority|monthly visits|bounce rate|peringkat global|peringkat dunia)\b/i;
+
+export function isSiteStat(text: string): boolean {
+  return SITE_STAT.test(text);
+}
+
+const NAV_LINE = /^(?:home|menu|search|subscribe|sign in|log in|skip to (?:content|main|navigation)|share(?: this)?|advertisement|sections|follow us|related coverage|cookie settings)\b/i;
+
+export function stripSiteNav(text: string): string {
+  return text
+    .split(/\n+/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (trimmed.length < 90 && (trimmed.match(/[|/]/g)?.length ?? 0) >= 4) return false;
+      if (trimmed.length < 80 && NAV_LINE.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
 export function isBoilerplate(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 40) return false;
+  if (isSiteStat(trimmed) && contentWords(trimmed).length < 80) return true;
   const hits = BOILERPLATE.filter((pattern) => pattern.test(trimmed)).length;
   if (hits >= 2) return true;
   if (hits >= 1 && contentWords(trimmed).length < 80) return true;
@@ -40,8 +63,40 @@ export function isBoilerplate(text: string): boolean {
   return pipes >= 8 && trimmed.length < 500;
 }
 
+export function flattenMarkdownTables(text: string): string {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const out: string[] = [];
+  let table: string[] = [];
+  const flush = () => {
+    if (table.length === 0) return;
+    out.push(table.join("\n"));
+    table = [];
+  };
+  for (const line of lines) {
+    const rendered = renderTableLine(line);
+    if (rendered === undefined) {
+      flush();
+      out.push(line);
+    } else if (rendered) {
+      table.push(rendered);
+    }
+  }
+  flush();
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function renderTableLine(line: string): string | null | undefined {
+  const pipes = line.match(/\|/g)?.length ?? 0;
+  if (pipes < 2) return undefined;
+  const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+  if (cells.length < 2) return undefined;
+  if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) return null;
+  if (cells.length === 2) return `${cells[0]}: ${cells[1]}`;
+  return cells.join(" — ");
+}
+
 export function passagesFromDocument(raw: string, query: string): string[] {
-  const text = raw.replace(/\r/g, "").trim();
+  const text = stripSiteNav(flattenMarkdownTables(raw)).trim();
   if (text.length < 40) return [];
   const parts = text
     .split(/\n{2,}|\[\s*\.\.\.\s*\]/g)
@@ -97,7 +152,7 @@ export function buildPassages(input: {
       });
       continue;
     }
-    const snippet = hit.content.trim();
+    const snippet = stripSiteNav(flattenMarkdownTables(hit.content)).trim();
     if (isBoilerplate(snippet) || (document && isBoilerplate(document.rawContent) && isBoilerplate(snippet))) {
       notes.push({
         url: hit.url,
@@ -136,7 +191,7 @@ function makePassage(index: number, hit: SelectedHit, text: string, origin: Pass
     id: `p${index}`,
     url: hit.url,
     title: hit.title,
-    publisher: hit.publisher || publisherFromUrl(hit.url),
+    publisher: readablePublisher(hit.publisher || publisherFromUrl(hit.url), hit.title, hit.url),
     publishedDate: hit.publishedDate,
     text,
     origin,

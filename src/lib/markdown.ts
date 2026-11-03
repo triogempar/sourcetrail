@@ -1,9 +1,12 @@
-import { formatDate } from "@/lib/text";
-import type { Brief, Sentence, VerificationSummary } from "@/lib/types";
+import { statesAbsence } from "@/lib/entailment";
+import { coerceSentences } from "@/lib/stream-state";
+import { briefLabels, canonicalUrl, formatDate } from "@/lib/text";
+import type { Brief, Passage, Sentence, VerificationSummary } from "@/lib/types";
 
-export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflicts">): string[] {
+export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflicts" | "aside">): string[] {
   const order: string[] = [];
   const push = (sentence: Sentence) => {
+    if (statesAbsence(sentence.text)) return;
     for (const id of sentence.citations) {
       if (!order.includes(id)) order.push(id);
     }
@@ -11,6 +14,7 @@ export function citationOrder(brief: Pick<Brief, "lede" | "sections" | "conflict
   brief.lede.forEach(push);
   brief.sections.forEach((section) => section.sentences.forEach(push));
   brief.conflicts.forEach((conflict) => conflict.sides.forEach((side) => side.sentences.forEach(push)));
+  coerceSentences(brief.aside).forEach(push);
   return order;
 }
 
@@ -19,18 +23,70 @@ export function footnoteNumber(order: string[], id: string): number {
   return index === -1 ? 0 : index + 1;
 }
 
-function renderSentence(sentence: Sentence, order: string[]): string {
+export type SourceGroup = {
+  url: string;
+  publisher: string;
+  title: string;
+  passages: Passage[];
+};
+
+export function groupBySource(passages: Passage[], order: string[]): { kept: SourceGroup[]; unread: SourceGroup[] } {
+  const byUrl = new Map<string, Passage[]>();
+  for (const passage of passages) {
+    const key = canonicalUrl(passage.url);
+    byUrl.set(key, [...(byUrl.get(key) ?? []), passage]);
+  }
+  const numberOf = (passage: Passage) => footnoteNumber(order, passage.id);
+  const groups = [...byUrl.values()].map((items) => {
+    const passagesInGroup = [...items].sort((a, b) => {
+      const left = numberOf(a);
+      const right = numberOf(b);
+      if (left === 0 && right === 0) return a.id.localeCompare(b.id);
+      if (left === 0) return 1;
+      if (right === 0) return -1;
+      return left - right;
+    });
+    const first = passagesInGroup[0]!;
+    return {
+      url: canonicalUrl(first.url),
+      publisher: first.publisher,
+      title: first.title,
+      passages: passagesInGroup,
+    };
+  });
+  const rank = (group: SourceGroup) => {
+    const numbers = group.passages.map(numberOf).filter((number) => number > 0);
+    return numbers.length > 0 ? Math.min(...numbers) : Number.MAX_SAFE_INTEGER;
+  };
+  const kept = groups.filter((group) => group.passages.some((passage) => numberOf(passage) > 0)).sort((a, b) => rank(a) - rank(b));
+  const unread = groups.filter((group) => group.passages.every((passage) => numberOf(passage) === 0)).sort((a, b) => a.passages[0]!.id.localeCompare(b.passages[0]!.id));
+  return { kept, unread };
+}
+
+export function absenceNote(sentence: Sentence, order: string[], language: string): string | null {
+  if (!statesAbsence(sentence.text) || sentence.citations.length === 0) return null;
+  if (sentence.citations.some((id) => footnoteNumber(order, id) > 0)) return null;
+  const count = new Set(sentence.citations).size;
+  return /^id\b|indones/i.test(language)
+    ? `Berdasarkan ${count} sumber yang dibaca.`
+    : `Based on ${count} ${count === 1 ? "source" : "sources"} read.`;
+}
+
+function renderSentence(sentence: Sentence, order: string[], inference: string, check: string, language: string): string {
   const marks = sentence.citations
     .map((id) => footnoteNumber(order, id))
     .filter((number) => number > 0)
     .map((number) => `[^${number}]`)
     .join("");
-  const prefix = sentence.kind === "inference" ? "*(inference)* " : sentence.flag === "partial" ? "*(check)* " : "";
-  return `${prefix}${sentence.text}${marks}`;
+  const prefix = sentence.kind === "inference" ? `*(${inference})* ` : sentence.flag === "partial" ? `*(${check})* ` : "";
+  const note = absenceNote(sentence, order, language);
+  return `${prefix}${sentence.text}${marks}${note ? ` (${note})` : ""}`;
 }
 
 export function briefToMarkdown(brief: Brief, summary: VerificationSummary | null): string {
   const order = citationOrder(brief);
+  const labels = briefLabels(brief.language);
+  const sentence = (item: Sentence) => renderSentence(item, order, labels.inference, labels.check, brief.language);
   const lines: string[] = [
     `# ${brief.headline}`,
     "",
@@ -38,10 +94,10 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     "",
   ];
   if (brief.insufficient) {
-    lines.push("## Not yet answered", "");
-    if (brief.gaps.length === 0) lines.push("The retrieved passages do not answer the question.");
+    lines.push(`## ${labels.unanswered}`, "");
+    if (brief.gaps.length === 0) lines.push(labels.unanswered);
     brief.gaps.forEach((gap) => lines.push(`- ${gap}`));
-    lines.push("", "### What was searched", "");
+    lines.push("", `### ${labels.searched}`, "");
     brief.searched.forEach((item) => {
       lines.push(`- ${item.subquestion}`);
       if (item.queries.length > 0) lines.push(`  - Queries: ${item.queries.join("; ")}`);
@@ -49,27 +105,32 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     lines.push("");
   }
   if (brief.lede.length > 0) {
-    lines.push(brief.lede.map((sentence) => renderSentence(sentence, order)).join(" "), "");
+    lines.push(brief.lede.map((item) => sentence(item)).join(" "), "");
   }
   for (const section of brief.sections) {
-    lines.push(`## ${section.heading}`, "", section.sentences.map((sentence) => renderSentence(sentence, order)).join(" "), "");
+    lines.push(`## ${section.heading}`, "", section.sentences.map((item) => sentence(item)).join(" "), "");
   }
   if (brief.conflicts.length > 0) {
-    lines.push("## Sources disagree", "");
+    lines.push(`## ${labels.disagree}`, "");
     for (const conflict of brief.conflicts) {
       lines.push(`### ${conflict.topic}`, "");
       for (const side of conflict.sides) {
-        lines.push(`**${side.label}.** ${side.sentences.map((sentence) => renderSentence(sentence, order)).join(" ")}`, "");
+        lines.push(`**${side.label}.** ${side.sentences.map((item) => sentence(item)).join(" ")}`, "");
       }
     }
   }
+  if (brief.aside.length > 0) {
+    lines.push(`## ${labels.instead}`, "");
+    coerceSentences(brief.aside).forEach((item) => lines.push(`- ${sentence(item)}`));
+    lines.push("");
+  }
   if (!brief.insufficient && brief.gaps.length > 0) {
-    lines.push("## Not yet answered", "");
+    lines.push(`## ${labels.unanswered}`, "");
     brief.gaps.forEach((gap) => lines.push(`- ${gap}`));
     lines.push("");
   }
   if (!brief.insufficient) {
-    lines.push("## What was searched", "");
+    lines.push(`## ${labels.searched}`, "");
     brief.searched.forEach((item) => {
       lines.push(`- ${item.subquestion}`);
       if (item.queries.length > 0) lines.push(`  - Queries: ${item.queries.join("; ")}`);
@@ -78,7 +139,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
   }
   if (summary) {
     lines.push(
-      "## Verification",
+      `## ${labels.verification}`,
       "",
       `${summary.checked} checked, ${summary.supported} supported, ${summary.flagged} flagged, ${summary.dropped} struck, ${summary.inferences} inferences.`,
       "",
@@ -86,7 +147,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
       "",
     );
     if (summary.droppedSentences.length > 0) {
-      lines.push("Struck:", "");
+      lines.push(`${labels.struck}:`, "");
       summary.droppedSentences.forEach((sentence) => lines.push(`- ${sentence.text} — ${sentence.reason}`));
       lines.push("");
     }
@@ -97,7 +158,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
       const passage = brief.passages.find((item) => item.id === id);
       if (!passage) return;
       lines.push(
-        `[^${index + 1}]: ${passage.publisher}. "${passage.title}." ${formatDate(passage.publishedDate)}. ${passage.url}`,
+        `[^${index + 1}]: ${passage.publisher}. "${passage.title}." ${formatDate(passage.publishedDate, brief.language)}. ${passage.url}`,
         "",
         `> ${passage.text}`,
         "",
@@ -106,7 +167,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
   }
   const unread = brief.passages.filter((passage) => !order.includes(passage.id));
   if (unread.length > 0) {
-    lines.push("## Passages read, not cited", "");
+    lines.push(`## ${labels.unread}`, "");
     unread.forEach((passage) => {
       lines.push(`- ${passage.publisher}. "${passage.title}." ${passage.url}`);
     });

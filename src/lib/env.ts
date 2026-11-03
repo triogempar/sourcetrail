@@ -51,6 +51,7 @@ function intInRange(name: string, fallback: number, min: number, max: number): n
 
 export const DEFAULT_NEBIUS_TIMEOUT_MS = 40_000;
 export const DEFAULT_VERIFY_TOKENS = 1_600;
+export const DEFAULT_WRITE_TOKENS = 3_200;
 
 export function resolveModels(): { primary: string; verify: string } {
   const primary = read("NEBIUS_MODEL") || "deepseek-ai/DeepSeek-V4.1-Flash";
@@ -76,7 +77,7 @@ export function getConfig(): RuntimeConfig {
     tokens: {
       plan: intInRange("SOURCETRAIL_MAX_TOKENS_PLAN", 700, 200, 1200),
       rewrite: intInRange("SOURCETRAIL_MAX_TOKENS_REWRITE", 160, 60, 300),
-      write: intInRange("SOURCETRAIL_MAX_TOKENS_WRITE", 1600, 400, 2500),
+      write: intInRange("SOURCETRAIL_MAX_TOKENS_WRITE", DEFAULT_WRITE_TOKENS, 800, 4000),
       verify: intInRange("SOURCETRAIL_MAX_TOKENS_VERIFY", DEFAULT_VERIFY_TOKENS, 400, 2400),
     },
     nebiusTimeoutMs: intInRange("NEBIUS_TIMEOUT_MS", DEFAULT_NEBIUS_TIMEOUT_MS, 5000, 55_000),

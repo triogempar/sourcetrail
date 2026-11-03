@@ -1,4 +1,5 @@
 import type { StreamState } from "@/lib/stream-state";
+import { trailPhaseLabel } from "@/lib/text";
 import type { TrailSource } from "@/lib/types";
 
 const DECISION: Record<TrailSource["decision"], string> = {
@@ -17,6 +18,7 @@ export function Trail({
   running: boolean;
   cap: number;
 }) {
+  const language = state.plan?.language ?? state.brief?.language ?? "en";
   const status = running && !state.phaseMessage ? "Opening the inquiry" : state.phaseMessage || "Waiting for a question";
   return (
     <aside className="trail" aria-label="Research trail">
@@ -30,7 +32,7 @@ export function Trail({
         <ol className="trail-list">
           {state.trail.map((entry) => (
             <li key={entry.id} className="trail-item" data-status={entry.status} data-phase={entry.phase}>
-              <p className="kicker">{entry.phase}{entry.round ? ` ${entry.round}` : ""}</p>
+              <p className="kicker">{trailPhaseLabel(language, entry.phase)}{entry.round ? ` ${entry.round}` : ""}</p>
               <p className="trail-title">{entry.title}</p>
               {entry.query ? <p className="query">{entry.query}</p> : null}
               {entry.detail ? <p className="trail-detail">{entry.detail}</p> : null}

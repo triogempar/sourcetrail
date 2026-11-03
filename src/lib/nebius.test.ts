@@ -6,7 +6,7 @@ import {
   readReasoningTokens,
   timeoutForTask,
 } from "@/lib/nebius";
-import { isBoilerplate } from "@/lib/passages";
+import { isBoilerplate, stripSiteNav } from "@/lib/passages";
 import { parseDraft, readVerdicts, salvageVerdicts } from "@/lib/schema";
 
 describe("thinking-default models", () => {
@@ -79,5 +79,8 @@ describe("headline and boilerplate", () => {
   it("drops a paywall passage", () => {
     expect(isBoilerplate("Subscribe to continue reading. Already a subscriber? Sign in to continue. This article is for subscribers.")).toBe(true);
     expect(isBoilerplate("A Hamburg pilot of solid-state cells reported a 612 km highway range at a constant 90 km/h.")).toBe(false);
+    const cleaned = stripSiteNav("Home | World | Politics | Business | Opinion\nSkip to content\nDemocrats hold a 9-point edge among likely voters.");
+    expect(cleaned).toBe("Democrats hold a 9-point edge among likely voters.");
+    expect(cleaned).not.toMatch(/Skip to content|Politics/);
   });
 });

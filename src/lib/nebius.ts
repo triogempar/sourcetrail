@@ -1,6 +1,6 @@
 import { isAbort, isTimeout, ProviderError } from "@/lib/errors";
 import { clip, withTimeout } from "@/lib/text";
-import type { Llm, LlmRequest, LlmTask } from "@/lib/types";
+import type { Llm, LlmCompletion, LlmRequest, LlmTask } from "@/lib/types";
 
 export function modelThinksByDefault(model: string): boolean {
   const id = model.toLowerCase();
@@ -57,6 +57,14 @@ export function readReasoningTokens(data: unknown): number {
   return 0;
 }
 
+export function readFinishReason(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const choices = (data as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") return null;
+  const reason = (choices[0] as { finish_reason?: unknown }).finish_reason;
+  return typeof reason === "string" ? reason : null;
+}
+
 export function readChatContent(data: unknown): string {
   if (!data || typeof data !== "object") return "";
   const choices = (data as { choices?: unknown }).choices;
@@ -94,7 +102,7 @@ async function safeBody(response: Response): Promise<string> {
 export class NebiusClient implements Llm {
   constructor(private readonly options: { apiKey: string; baseUrl: string; timeoutMs: number }) {}
 
-  async complete(input: LlmRequest): Promise<string> {
+  async complete(input: LlmRequest): Promise<LlmCompletion> {
     const url = `${this.options.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const budget = input.timeoutMs ?? this.options.timeoutMs;
     const signal = withTimeout(input.signal, timeoutForTask(input.task, budget));
@@ -135,7 +143,7 @@ export class NebiusClient implements Llm {
         : "Nebius returned an empty completion.";
       throw new ProviderError("nebius", response.status, message);
     }
-    return text;
+    return { content: text, finishReason: readFinishReason(data) };
   }
 
   private async post(url: string, body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {

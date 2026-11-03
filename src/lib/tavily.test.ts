@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readChatContent } from "@/lib/nebius";
-import { passagesFromDocument } from "@/lib/passages";
+import { flattenMarkdownTables, passagesFromDocument } from "@/lib/passages";
 import { parseExtract, parseSearchHits } from "@/lib/tavily";
 
 describe("Tavily parsers", () => {
@@ -31,6 +31,13 @@ describe("Tavily parsers", () => {
     expect(parsed.failed[0]?.error).toBe("timeout");
     const chunks = passagesFromDocument(parsed.documents[0]!.rawContent, "paragraph passage");
     expect(chunks.length).toBeGreaterThan(0);
+  });
+
+  it("turns a markdown table into label lines", () => {
+    const flat = flattenMarkdownTables("| Issue | Share |\n| --- | --- |\n| The economy | 84 |\n| Immigration | 61 |");
+    expect(flat).toContain("The economy: 84");
+    expect(flat).toContain("Immigration: 61");
+    expect(flat).not.toContain("---");
   });
 });
 

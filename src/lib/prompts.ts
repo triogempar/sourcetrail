@@ -1,4 +1,5 @@
 import type { Passage } from "@/lib/types";
+import { isSlugPublisher } from "@/lib/text";
 
 type PromptSentence = {
   id: string;
@@ -43,46 +44,55 @@ export function writePrompt(input: {
   passages: Passage[];
 }): { system: string; user: string } {
   const passages = input.passages
-    .map((passage) => `[${passage.id}] ${passage.publisher} | ${passage.publishedDate ?? "undated"} | ${passage.title} | ${passage.url}\n"""${passage.text}"""`)
+    .map((passage) => `[${passage.id}] ${isSlugPublisher(passage.publisher) ? "unnamed site" : passage.publisher} | ${passage.publishedDate ?? "undated"} | ${passage.title} | ${passage.url}\n"""${passage.text}"""`)
     .join("\n\n");
   return {
     system: [
-      "You write a short research brief grounded only in the passages below.",
-      `Write every user-facing string in the language of the question. Language: ${input.language}.`,
-      "Answer the question in lede first. Put supporting points in sections.",
-      "kind fact is allowed only when the cited passages state it. Copy figures and names exactly. Every fact needs citation ids such as p1.",
-      "Do not inherit the source's first person. If a passage says we, our, or I, name the publisher in the sentence, for example 'Harbor Desk called both figures highs for its poll.' Do not write 'highs for our poll' as if this notebook ran the poll.",
-      "The headline is a finished phrase. Do not end it with an ellipsis or a cut-off word.",
+      "You write a short research brief grounded only in the stored sources below.",
+      `Write every user-facing string, including section headings, in the language of the question. Language: ${input.language}.`,
+      "Stay compact: at most 6 sentences in the whole brief, each under 220 characters. Answer in lede first.",
+      "kind fact is allowed only when the cited sources state it. Copy figures and names exactly. Every fact needs citation ids such as p1 in the citations array only. Never write (p1) or p1 inside the sentence.",
+      "Name the publisher in ordinary prose, using the name in the source header. If the header says unnamed site, do not name that publisher at all. Never paste a raw domain, a smashed host such as Nytimes or Lppm-stikesfa, a URL, or the word passage.",
+      "In conflicts, each side is one complete sentence that keeps every figure. Do not copy a lede or section sentence, and do not pair a public-opinion survey with betting odds.",
+      "When you set conflicts, the headline must say the evidence is mixed, in the question language, rather than restating only one study.",
+      "Do not inherit the source's first person. If a source says we, our, or I, attribute it, for example 'Harbor Desk called both figures highs for its poll.'",
+      "The headline is a finished phrase in the question language. Do not end it with an ellipsis or a cut-off word.",
+      "Do not repeat a sentence in a later section.",
       "kind inference is a conclusion the passages support without stating it in those words. An inference must not add numbers, dates, or names absent from the passages.",
-      "If two passages make incompatible claims, put both in conflicts and do not pick a winner.",
-      "If the passages do not answer the question, set insufficient true, keep lede empty or limited to what the passages literally say, and list the gaps.",
+      "If two passages point in opposite directions on the same claim, put both in conflicts and do not pick a winner. Do not open a conflict when they agree who leads, or whether there is an effect, and differ only in the size of the margin or the population. Write one sentence instead, for example 'Polls put the lead between 7 and 11 points.'",
+      "A fact that is true but about a different place, institution, or population does not answer the question. Leave it out of lede and sections. If nothing answers the question, set insufficient true.",
+      "If two chunks of the same source disagree, put both in conflicts.",
+      "If the passages do not answer the question, set insufficient true, leave sections empty, and list the gap. Do not add a section of off-topic pages.",
+      "Do not widen a dose or subgroup. If a source only compares more than two cups a day with two or fewer, do not call that routine or general coffee intake.",
       "Do not use world knowledge to fill a gap.",
       JSON_ONLY,
       `Schema: {"headline":"...","insufficient":false,"lede":[{"text":"...","kind":"fact","citations":["p1"]}],"sections":[{"heading":"...","sentences":[]}],"conflicts":[{"topic":"...","sides":[{"label":"...","sentences":[{"text":"...","kind":"fact","citations":["p2"]}]}]}],"gaps":["..."]}`,
     ].join(" "),
-    user: `Question:\n${input.question}\n\nPassages:\n${passages}`,
+    user: `Question:\n${input.question}\n\nSources:\n${passages}`,
   };
 }
 
-export function verifyPrompt(sentences: PromptSentence[], passages: Passage[]): { system: string; user: string } {
+export function verifyPrompt(sentences: PromptSentence[], passages: Passage[], question: string): { system: string; user: string } {
   const blocks = sentences.map((sentence) => {
     const cited = sentence.citations.map((id) => {
       const passage = passages.find((item) => item.id === id);
-      return passage ? `[${id}] ${passage.text}` : `[${id}] missing passage`;
+      return passage ? `[${id}] title: ${passage.title}\n${passage.text}` : `[${id}] missing passage`;
     }).join("\n");
     return `id: ${sentence.id}\nkind: ${sentence.kind}\ntext: ${sentence.text}\ncited:\n${cited || "(none)"}`;
   }).join("\n\n");
   return {
     system: [
       "You check whether each sentence is entailed by its cited passages.",
-      "Use only the passages in the prompt. Outside knowledge is not evidence.",
+      "Use only the passages in the prompt. Outside knowledge is not evidence. A cited page's title counts as evidence.",
       "Mark unsupported when a number, date, or name in the sentence is absent from the cited passages.",
-      "Mark partial when the passage supports only part of the sentence.",
+      "If the figures and the named actors are in the passage, mark supported. A paraphrase is still supported: 'favoring a Republican Senate win' matches 'favor a Republican Party win for the Senate'.",
+      "Mark partial when the passage supports only part of the sentence, including when the sentence widens a dose, population, or condition the source limited.",
       "Inferences may be supported without a verbatim match, but they are unsupported if they add new figures or names.",
+      "Set relevant false when the sentence is about a different place, institution, or population than the question, even if the cited text supports the wording.",
       JSON_ONLY,
-      `Schema: {"sentences":[{"id":"s1","verdict":"supported","reason":"figure matches"}]}`,
+      `Schema: {"sentences":[{"id":"s1","verdict":"supported","relevant":true,"reason":"same place"}]}`,
       "verdict is supported, unsupported, or partial. Each reason is at most 8 words.",
     ].join(" "),
-    user: blocks,
+    user: `Question:\n${question}\n\n${blocks}`,
   };
 }

@@ -51,8 +51,13 @@ export type LlmRequest = {
   signal?: AbortSignal;
 };
 
+export type LlmCompletion = {
+  content: string;
+  finishReason: string | null;
+};
+
 export type Llm = {
-  complete(input: LlmRequest): Promise<string>;
+  complete(input: LlmRequest): Promise<string | LlmCompletion>;
 };
 
 export type SearchRequest = {
@@ -116,6 +121,7 @@ export type Brief = {
   sections: { heading: string; sentences: Sentence[] }[];
   conflicts: { topic: string; sides: { label: string; sentences: Sentence[] }[] }[];
   gaps: string[];
+  aside: Sentence[];
   searched: { subquestion: string; queries: string[] }[];
   passages: Passage[];
   models: { primary: string; verify: string; mode: "live" | "mock" };

@@ -488,11 +488,13 @@ button, .text-button {
 .side + .side { border-left: 1px solid var(--rule); padding-left: 1rem; }
 .side p { margin: 0.3rem 0 0; }
 
-.gaps {
+.gaps, .instead {
   border: 1px dashed var(--ink);
 }
 
-.gaps ul, .verification ul, .source-index ul, .struck {
+.instead { background: transparent; }
+
+.gaps ul, .instead ul, .verification ul, .source-index ul, .struck {
   margin: 0.4rem 0 0;
   padding-left: 1.1rem;
 }
@@ -519,6 +521,9 @@ button, .text-button {
 .struck li span { text-decoration: line-through; text-decoration-thickness: 1px; }
 
 .source-index { border-top: 1px solid var(--rule); padding-left: 0; padding-right: 0; }
+.source-index ul ul { margin: 0.15rem 0 0.35rem; padding-left: 1.1rem; }
+.source-index li p { margin: 0.35rem 0 0.1rem; }
+
 .source-index button {
   font-family: var(--font-serif), Georgia, serif;
   font-size: 1.02rem;

@@ -40,8 +40,9 @@ describe("mock inquiries", () => {
     expect(result.error).toBeNull();
     expect(result.brief?.insufficient).toBe(false);
     expect(result.brief?.lede.some((sentence) => sentence.text.includes("612 km"))).toBe(true);
-    expect(JSON.stringify(result.brief)).not.toMatch(/40 percent/);
-    expect(result.summary?.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(true);
+    const cost = result.brief?.lede.find((sentence) => sentence.text.includes("40 percent"));
+    expect(cost?.flag).toBe("partial");
+    expect(result.summary?.droppedSentences.some((sentence) => sentence.text.includes("40"))).toBe(false);
     expect(result.credits).toBeLessThanOrEqual(8);
     expect(events.some((event) => event.type === "brief")).toBe(true);
     expect(result.brief?.passages.every((passage) => passage.url.startsWith("https://"))).toBe(true);
@@ -147,6 +148,76 @@ describe("credit cap", () => {
     expect(searches).toBe(1);
     expect(result.credits).toBeLessThanOrEqual(2);
     expect(events.some((event) => event.type === "trail" && /credit cap/i.test(event.entry.detail ?? ""))).toBe(true);
+  });
+});
+
+describe("verify batches", () => {
+  it("checks batches at the same time", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const passage = "A Hamburg pilot of solid-state cells in a midsize passenger car reported a 612 km highway range at a constant 90 km/h.";
+    const sentences = Array.from({ length: 9 }, (_, index) => ({
+      text: index === 0 ? passage : `${passage} Detail ${index} remains the same highway figure.`,
+      kind: "fact" as const,
+      citations: ["p1"],
+    }));
+    const llm: Llm = {
+      async complete(input) {
+        if (input.task === "plan") {
+          return JSON.stringify({
+            language: "en",
+            recency: false,
+            topic: "general",
+            subquestions: [
+              { id: "sq1", question: "What range was reported for the car?", query: "hamburg range" },
+              { id: "sq2", question: "Who measured the highway range?", query: "hamburg measurement" },
+              { id: "sq3", question: "Was the trial a single car?", query: "hamburg single car" },
+            ],
+          });
+        }
+        if (input.task === "write") {
+          return JSON.stringify({
+            headline: "One Hamburg car posted a 612 km highway range",
+            insufficient: false,
+            lede: sentences,
+            sections: [],
+            conflicts: [],
+            gaps: [],
+          });
+        }
+        if (input.task !== "verify") return JSON.stringify({ query: "hamburg range follow up" });
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        active -= 1;
+        const ids = [...input.user.matchAll(/\bid: (s\d+)\b/g)].map((match) => match[1]);
+        return JSON.stringify({ sentences: ids.map((id) => ({ id, verdict: "supported", relevant: true, reason: "ok" })) });
+      },
+    };
+    const search: SearchClient = {
+      async search() {
+        return [{
+          title: "Range",
+          url: "https://example.com/range",
+          content: passage,
+          score: 0.9,
+          publishedDate: "2026-10-28",
+          publisher: "Harbor Desk",
+        }];
+      },
+      async extract(input) {
+        return { documents: input.urls.map((url) => ({ url, rawContent: passage })), failed: [] };
+      },
+    };
+    await runResearch("What highway range did the Hamburg pilot report?", {
+      mode: "live",
+      llm,
+      search,
+      models: fixtureConfig().models,
+      maxCredits: 8,
+      tokens: fixtureConfig().tokens,
+    }, () => {});
+    expect(maxActive).toBeGreaterThanOrEqual(2);
   });
 });
 
