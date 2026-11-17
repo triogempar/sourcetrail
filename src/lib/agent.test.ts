@@ -76,7 +76,7 @@ describe("mock inquiries", () => {
     const events: ResearchEvent[] = [];
     const result = await runResearch(question, createMockDeps(question, fixtureConfig()), (event) => events.push(event));
     expect(result.brief).toBeNull();
-    expect(result.error).toMatch(/No brief was filed/);
+    expect(result.error).toMatch(/We couldn't finish an answer/);
     expect(events.some((event) => event.type === "brief")).toBe(false);
     expect(events.some((event) => event.type === "trail" && event.entry.status === "error")).toBe(true);
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { absenceNote, briefToMarkdown, citationOrder, footnoteNumber, groupBySource } from "@/lib/markdown";
 import { briefLabels, clip, formatDate } from "@/lib/text";
 import { coerceSentences, type InquiryOutcome } from "@/lib/stream-state";
@@ -22,7 +22,30 @@ export function BriefView({
   const order = useMemo(() => citationOrder(brief), [brief]);
   const sources = useMemo(() => groupBySource(brief.passages, order), [brief.passages, order]);
   const [copied, setCopied] = useState(false);
+  const [showHint, setShowHint] = useState(true);
   const markdown = useMemo(() => briefToMarkdown(brief, summary), [brief, summary]);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("sourcetrail-cite-hint") === "seen") setShowHint(false);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  function dismissHint() {
+    setShowHint(false);
+    try {
+      sessionStorage.setItem("sourcetrail-cite-hint", "seen");
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
+  function openCite(passageId: string, claim: string) {
+    dismissHint();
+    onCite(passageId, claim);
+  }
 
   async function copyMarkdown() {
     try {
@@ -64,26 +87,31 @@ export function BriefView({
     </section>
   );
 
+  const hint = showHint && order.length > 0 ? <p className="cite-hint">{labels.citeHint}</p> : null;
+  const removed = summary && summary.droppedSentences.length > 0 ? (
+    <aside className="removed" role="note">
+      <p>{labels.removed(summary.droppedSentences.length)}</p>
+      <ul>
+        {summary.droppedSentences.map((sentence) => (
+          <li key={sentence.text}><span>{sentence.text}</span> {sentence.reason}</li>
+        ))}
+      </ul>
+    </aside>
+  ) : null;
+  const alert = brief.insufficient || brief.conflicts.length > 0;
+
   return (
-    <article className="brief" data-outcome={outcome} aria-label="Research brief">
+    <article className="brief" data-outcome={outcome} aria-label={labels.brief}>
       <header className="brief-head">
         <div>
-          <p className="kicker">
+          <p className={alert ? "status-line alert" : "status-line"}>
             {brief.insufficient ? labels.insufficient : brief.conflicts.length > 0 ? labels.contested : labels.brief}
           </p>
-          <h1>{brief.headline}</h1>
+          <h1>{brief.insufficient ? labels.noAnswer : brief.headline}</h1>
           <p className="asked">{brief.question}</p>
           <p className="dateline">
             <span>{labels.passages(brief.passages.length)}</span>
-            <span>{summary ? labels.checked(summary.checked) : labels.unchecked}</span>
-            {brief.models.mode === "mock" ? (
-              <span>{labels.fixture}</span>
-            ) : (
-              <>
-                <span>{brief.models.primary}</span>
-                <span>{brief.models.verify}</span>
-              </>
-            )}
+            {brief.models.mode === "mock" ? <span>{labels.fixture}</span> : null}
           </p>
         </div>
         <div className="export">
@@ -91,7 +119,24 @@ export function BriefView({
           <button type="button" className="ghost" onClick={downloadMarkdown}>{labels.download}</button>
         </div>
       </header>
-      {brief.insufficient ? gaps : null}
+      {removed}
+      {hint}
+      {brief.insufficient ? (
+        <section className="looked-for" aria-label={labels.searched}>
+          <h2>{labels.searched}</h2>
+          {brief.gaps.length > 0 ? (
+            <ul>{brief.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
+          ) : null}
+          <ul className="search-log">
+            {brief.searched.map((item) => (
+              <li key={item.subquestion}>
+                <p>{item.subquestion}</p>
+                <p className="query">{item.queries.length > 0 ? item.queries.join("  ·  ") : labels.notRun}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {brief.lede.length > 0 ? (
         <p className="lede">
           {brief.lede.map((sentence) => (
@@ -101,7 +146,7 @@ export function BriefView({
               order={order}
               labels={labels}
               language={brief.language}
-              onCite={onCite}
+              onCite={openCite}
               activePassageId={activePassageId}
             />
           ))}
@@ -118,7 +163,7 @@ export function BriefView({
                 order={order}
                 labels={labels}
                 language={brief.language}
-                onCite={onCite}
+                onCite={openCite}
                 activePassageId={activePassageId}
               />
             ))}
@@ -134,7 +179,7 @@ export function BriefView({
               <div className="sides">
                 {conflict.sides.map((side) => (
                   <div className="side" key={side.label}>
-                    <p className="kicker">{side.label}</p>
+                    <p className="side-label">{side.label}</p>
                     <p>
                       {side.sentences.map((sentence) => (
                         <SentenceText
@@ -143,7 +188,7 @@ export function BriefView({
                           order={order}
                           labels={labels}
                           language={brief.language}
-                          onCite={onCite}
+                          onCite={openCite}
                           activePassageId={activePassageId}
                         />
                       ))}
@@ -166,7 +211,7 @@ export function BriefView({
                   order={order}
                   labels={labels}
                   language={brief.language}
-                  onCite={onCite}
+                  onCite={openCite}
                   activePassageId={activePassageId}
                 />
               </li>
@@ -200,7 +245,7 @@ export function BriefView({
                     order={order}
                     language={brief.language}
                     claim={brief.lede[0]?.text || group.passages[0]!.text}
-                    onCite={onCite}
+                    onCite={openCite}
                   />
                 ) : (
                   <>
@@ -213,7 +258,7 @@ export function BriefView({
                             order={order}
                             language={brief.language}
                             claim={brief.lede[0]?.text || passage.text}
-                            onCite={onCite}
+                            onCite={openCite}
                             hidePublisher
                           />
                         </li>
@@ -232,7 +277,7 @@ export function BriefView({
           <ul>
             {sources.unread.map((group) => (
               <li key={group.url}>
-                <button type="button" onClick={() => onCite(group.passages[0]!.id, group.passages[0]!.text)}>
+                <button type="button" onClick={() => openCite(group.passages[0]!.id, group.passages[0]!.text)}>
                   {group.publisher}. {group.title}. {formatDate(group.passages[0]!.publishedDate, brief.language)}
                 </button>
               </li>
@@ -241,27 +286,22 @@ export function BriefView({
         </section>
       ) : null}
       {summary ? (
-        <section className="verification" aria-label={labels.verification}>
-          <h2>{labels.verification}</h2>
+        <details className="verification">
+          <summary>{labels.verification}</summary>
           <p className="dateline">
-            <span>{summary.checked} checked</span>
-            <span>{summary.supported} supported</span>
-            <span>{summary.flagged} flagged</span>
-            <span>{summary.dropped} struck</span>
-            <span>{summary.inferences} inferences</span>
+            <span>{labels.checked(summary.checked)}</span>
+            <span>{labels.supportedLine(summary.supported)}</span>
+            <span>{labels.flaggedLine(summary.flagged)}</span>
+            <span>{labels.removedLine(summary.dropped)}</span>
+            <span>{labels.inferenceLine(summary.inferences)}</span>
           </p>
           <p>{summary.note}</p>
-          {summary.droppedSentences.length > 0 ? (
-            <>
-              <h3>{labels.struck}</h3>
-              <ul className="struck">
-                {summary.droppedSentences.map((sentence) => (
-                  <li key={sentence.text}><span>{sentence.text}</span> {sentence.reason}</li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-        </section>
+          {brief.models.mode === "mock" ? (
+            <p>{labels.demoNote}</p>
+          ) : (
+            <p>{labels.modelsLine(brief.models.primary, brief.models.verify)}</p>
+          )}
+        </details>
       ) : null}
     </article>
   );
@@ -325,7 +365,7 @@ function SentenceText({
               type="button"
               className="cite"
               aria-expanded={activePassageId === id}
-              aria-label={`Show source ${number}`}
+              aria-label={labels.sourceHeading(number)}
               onClick={() => onCite(id, sentence.text)}
             >
               {number}

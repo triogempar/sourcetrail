@@ -9,6 +9,7 @@ import type { PublicConfig } from "@/lib/env";
 import { footnoteNumber, citationOrder } from "@/lib/markdown";
 import { takeNdjson } from "@/lib/ndjson";
 import { emptyStream, inquiryOutcome, reduceStream, type StreamState } from "@/lib/stream-state";
+import { searchStoppedLabel, trailPhaseLabel } from "@/lib/text";
 import type { ResearchEvent } from "@/lib/types";
 
 export function ResearchApp({ config }: { config: PublicConfig }) {
@@ -55,7 +56,7 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
         return;
       }
       if (!response.body) {
-        setHttpError("The desk returned an empty stream.");
+        setHttpError("The connection came back empty.");
         return;
       }
       const reader = response.body.getReader();
@@ -80,11 +81,11 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
         if (!current.brief && !current.error && !current.done) {
           return {
             ...current,
-            error: "The connection closed before a verified brief was filed.",
+            error: "The connection closed before we could finish an answer.",
             failed: true,
             done: true,
             phase: "done",
-            phaseMessage: "Stopped",
+            phaseMessage: "Search stopped",
           };
         }
         return current;
@@ -93,45 +94,45 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setState((current) => current.brief ? current : {
           ...current,
-          error: "The inquiry was stopped before a brief was filed.",
+          error: "Search stopped before we could finish an answer.",
           failed: true,
           done: true,
           phase: "done",
-          phaseMessage: "Stopped",
+          phaseMessage: "Search stopped",
         });
         return;
       }
-      setHttpError(error instanceof Error ? error.message : "The inquiry stopped.");
+      setHttpError(error instanceof Error ? plainError(error.message) : "Search stopped.");
     } finally {
       setRunning(false);
     }
   }
 
-  const visibleError = httpError || state.error;
+  const visibleError = plainError(httpError || state.error || "");
   const outcome = httpError ? "error" : inquiryOutcome(state, running);
   const examples = EXAMPLES.filter((example) => config.mock || !example.mockOnly);
   const passage = state.brief?.passages.find((item) => item.id === sheet?.passageId) ?? null;
   const noteNumber = state.brief && sheet ? footnoteNumber(citationOrder(state.brief), sheet.passageId) : 0;
   const tooLong = question.length > config.maxQuestionLength;
+  const remaining = config.maxQuestionLength - question.length;
+  const nearLimit = remaining <= 80;
 
   return (
     <>
-      <a className="skip" href="#brief-column">Skip to the brief</a>
+      <a className="skip" href="#brief-column">Skip to the answer</a>
       <div className="page">
         <header className="nameplate">
-          <p className="issue"><span>ODSC × Nebius</span><span>No. 01</span></p>
-          {state.brief ? <p className="wordmark">SourceTrail</p> : <h1 className="wordmark">SourceTrail</h1>}
-          <hr className="rule-double" />
-          <p className="deck">One question goes in. A short brief comes out, and every factual sentence has to point at a passage that actually says it.</p>
+          {state.brief || visibleError ? <p className="wordmark">SourceTrail</p> : <h1 className="wordmark">SourceTrail</h1>}
+          <p className="deck">Ask one question and get a short brief, with a source for every sentence.</p>
         </header>
         {config.paused ? (
           <div className="banner" role="status">
-            <p>The notebook is paused. New questions are not being opened.</p>
+            <p>This site is paused. New questions are not being opened.</p>
           </div>
         ) : null}
         {config.mock ? (
           <div className="banner">
-            <p>Fixture desk. Nebius and Tavily are not called. Passages on the sample inquiries are recorded fixtures, not live web results.</p>
+            <p>Demo mode. We are not searching the live web. The sample questions use saved pages, so you can see how a brief looks.</p>
           </div>
         ) : null}
         {!config.configured && !config.paused ? (
@@ -146,18 +147,22 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
             void fileQuestion(question);
           }}
         >
-          <label className="inquiry-label kicker" htmlFor={fieldId}>The question</label>
+          <label className="field-label" htmlFor={fieldId}>Your question</label>
           <textarea
             id={fieldId}
             className="question"
             value={question}
             maxLength={config.maxQuestionLength + 40}
             disabled={config.paused}
-            placeholder="Ask something a source can answer."
+            placeholder="Ask a question that a public source could answer."
+            aria-describedby={`${fieldId}-help`}
             onChange={(event) => setQuestion(event.target.value)}
           />
+          <p id={`${fieldId}-help`} className="reassure">We&apos;ll search the web and write a short brief. Every sentence points to a source. If we can&apos;t find one, we&apos;ll say so.</p>
           <div className="inquiry-row">
-            <p className="count">{Math.max(0, config.maxQuestionLength - question.length)} characters left</p>
+            {nearLimit ? (
+              <p className="count">{remaining >= 0 ? `${remaining} characters left` : `${Math.abs(remaining)} characters over the limit`}</p>
+            ) : null}
             <div className="actions">
               {running ? (
                 <button type="button" className="ghost" onClick={() => abortRef.current?.abort()}>
@@ -165,45 +170,28 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
                 </button>
               ) : null}
               <button className="file" type="submit" disabled={config.paused || running || question.trim().length < 8 || tooLong}>
-                {running ? "Inquiry in progress" : "File the question"}
+                {running ? "Searching…" : "Get a brief"}
               </button>
             </div>
           </div>
-          {outcome === "idle" ? (
-            <ul className="examples">
-              {examples.map((example) => (
-                <li key={example.id}>
-                  <button
-                    type="button"
-                    className="example"
-                    disabled={config.paused || running}
-                    onClick={() => void fileQuestion(example.question)}
-                  >
-                    <span className="kicker">{example.kicker}</span>
-                    <span className="q">{example.question}</span>
-                    <span className="dek">{example.dek}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="example-row">
-              <p className="kicker">Other inquiries</p>
-              {examples.map((example) => (
+          <p className="try-label">{outcome === "idle" ? "Try one of these" : "Try another question"}</p>
+          <ul className="examples">
+            {examples.map((example) => (
+              <li key={example.id}>
                 <button
-                  key={example.id}
                   type="button"
-                  className="text-button"
+                  className="example"
                   disabled={config.paused || running}
                   onClick={() => void fileQuestion(example.question)}
                 >
-                  {example.kicker}
+                  <span className="title">{example.kicker}</span>
+                  {outcome === "idle" ? <span className="q">{example.question}</span> : null}
                 </button>
-              ))}
-            </div>
-          )}
+              </li>
+            ))}
+          </ul>
         </form>
-        <div className="workspace">
+        <div className={state.brief ? "workspace has-brief" : "workspace"}>
           <Trail state={state} running={running} cap={config.maxCredits} />
           <div className="column" id="brief-column">
             {state.brief ? (
@@ -216,32 +204,30 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
               />
             ) : visibleError ? (
               <section className="failure" role="alert" data-outcome="error">
-                <p className="kicker">Inquiry stopped</p>
-                <h1>No brief was filed</h1>
+                <p className="status-line alert">{searchStoppedLabel("en")}</p>
+                <h1>We couldn&apos;t finish an answer</h1>
                 <p>{visibleError}</p>
-                <p>A brief is filed only after a passage is stored and checked.</p>
+                <p className="failure-note">We only show an answer after a source is saved and checked.</p>
               </section>
             ) : running ? (
-              <p className="waiting">{state.phaseMessage || "Opening the inquiry"}</p>
+              <p className="waiting">{trailPhaseLabel(state.plan?.language ?? "en", state.phase === "idle" ? "plan" : state.phase)}</p>
             ) : (
               <section className="method">
-                <p className="kicker">How a page gets filed</p>
+                <h2>How it works</h2>
                 <ol>
-                  <li>The question is split into a few lines of inquiry, and the desk decides whether recency matters.</li>
-                  <li>Each line is searched. An empty or weak page gets one rewritten query, inside a hard credit cap.</li>
-                  <li>The strongest pages are read. Verbatim passages are kept with their publisher, date, and URL.</li>
-                  <li>The brief may use only those passages. A second pass strikes any sentence they do not support.</li>
+                  <li>We split your question into a few smaller questions, and decide whether a recent source matters.</li>
+                  <li>We search each smaller question. If a search comes back empty or weak, we try one rewritten search.</li>
+                  <li>We read the strongest pages and keep exact quotes, with the publisher, date, and link.</li>
+                  <li>The brief can use only those quotes. If a sentence isn&apos;t backed by a source, we cross it out.</li>
                 </ol>
               </section>
             )}
           </div>
         </div>
         <footer className="colophon">
-          <p>
-            {config.perHour} inquiries an hour from one network. {config.dailyCap} a day across the desk.
-            At most {config.maxCredits} Tavily credits a question. Claims without a supporting passage are struck.
-          </p>
-          <p>Press / to focus the question.</p>
+          <p>Built for the ODSC × Nebius hackathon.</p>
+          <p>You can ask {config.perHour} questions an hour from this connection, and {config.dailyCap} a day on this site.</p>
+          <p>If a sentence isn&apos;t backed by a source, we cross it out. Press / to focus the question.</p>
         </footer>
       </div>
       {passage && sheet ? (
@@ -250,6 +236,7 @@ export function ResearchApp({ config }: { config: PublicConfig }) {
           claim={sheet.claim}
           number={noteNumber || 1}
           mock={config.mock || state.mock}
+          language={state.brief?.language ?? "en"}
           onClose={() => setSheet(null)}
         />
       ) : null}
@@ -266,5 +253,14 @@ async function readError(response: Response): Promise<string> {
   } catch {
     /* not JSON */
   }
-  return `The desk returned status ${response.status}.`;
+  return `The server returned status ${response.status}.`;
+}
+
+function plainError(message: string): string {
+  if (!message) return "";
+  return message
+    .replaceAll("No brief was filed", "We couldn't finish an answer")
+    .replaceAll("lines of inquiry", "smaller questions")
+    .replaceAll("The inquiry was stopped", "Search stopped")
+    .replaceAll("The inquiry stopped", "Search stopped");
 }

@@ -27,7 +27,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "SourceTrail",
-  description: "A research notebook that turns one question into a short, sourced, verifiable brief.",
+  description: "Ask one question and get a short brief, with a source for every sentence.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

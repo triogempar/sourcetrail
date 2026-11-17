@@ -496,64 +496,124 @@ export type BriefLabels = {
   checked: (count: number) => string;
   unchecked: string;
   fixture: string;
+  removed: (count: number) => string;
+  noAnswer: string;
+  sentenceInBrief: string;
+  quoteFound: string;
+  openOriginal: string;
+  quotedFromPage: string;
+  searchPreview: string;
+  noHighlight: string;
+  sourceHeading: (count: number) => string;
+  close: string;
+  closeSource: string;
+  citeHint: string;
+  showAll: string;
+  showFewer: string;
+  supportedLine: (count: number) => string;
+  flaggedLine: (count: number) => string;
+  removedLine: (count: number) => string;
+  inferenceLine: (count: number) => string;
+  modelsLine: (primary: string, verify: string) => string;
+  demoNote: string;
 };
 
 export function briefLabels(language: string): BriefLabels {
   if (/^id\b|indones/i.test(language)) {
     return {
-      insufficient: "Bukti tidak cukup",
-      contested: "Sumber berbeda",
-      brief: "Ringkasan riset",
-      disagree: "Sumber tidak sependapat",
-      unanswered: "Belum terjawab",
-      searched: "Yang dicari",
-      kept: "Kutipan yang disimpan",
-      unread: "Dibaca, tidak dikutip",
-      verification: "Pemeriksaan",
-      inference: "Inferensi",
-      check: "Periksa",
-      struck: "Dicoret",
-      notRun: "Tidak dijalankan",
-      instead: "Yang ditemukan sebagai gantinya",
-      copy: "Salin Markdown",
+      insufficient: "Kami tidak menemukan cukup bukti",
+      contested: "Sumber tidak sepakat",
+      brief: "Ringkasan Anda",
+      disagree: "Sumber tidak sepakat",
+      unanswered: "Ini belum bisa kami jawab",
+      searched: "Ini yang kami cari",
+      kept: "Sumber yang kami pakai",
+      unread: "Halaman yang kami buka tapi tidak kami kutip",
+      verification: "Cara kami memeriksa ini",
+      inference: "Tafsiran",
+      check: "Hanya sebagian didukung",
+      struck: "Kalimat yang kami hapus",
+      notRun: "Tidak kami jalankan",
+      instead: "Yang kami temukan sebagai gantinya",
+      copy: "Salin sebagai teks",
       download: "Unduh",
       copied: "Tersalin",
-      basedOn: (count) => `Berdasarkan ${count} sumber yang dibaca`,
-      passages: (count) => `${count} kutipan`,
-      checked: (count) => `${count} klaim diperiksa`,
+      basedOn: (count) => `Berdasarkan ${count} sumber yang kami baca`,
+      passages: (count) => `${count} sumber`,
+      checked: (count) => `${count} kalimat diperiksa`,
       unchecked: "Belum diperiksa",
-      fixture: "Meja contoh",
+      fixture: "Mode demo",
+      removed: (count) => `Kami menghapus ${count} kalimat karena sumber tidak mendukungnya.`,
+      noAnswer: "Kami tidak menemukan jawaban.",
+      sentenceInBrief: "Kalimat di ringkasan Anda",
+      quoteFound: "Kutipan yang kami temukan",
+      openOriginal: "Buka halaman aslinya",
+      quotedFromPage: "Dikutip dari halaman",
+      searchPreview: "Dari pratinjau pencarian (kami tidak bisa membuka halaman penuh)",
+      noHighlight: "Kami tidak bisa menandai kecocokan yang persis. Silakan baca kutipan ini dan putuskan apakah kutipan itu mendukung kalimat tersebut.",
+      sourceHeading: (count) => `Sumber ${count}`,
+      close: "Tutup",
+      closeSource: "Tutup sumber",
+      citeHint: "Klik angka untuk melihat kutipan.",
+      showAll: "Tampilkan semua",
+      showFewer: "Tampilkan lebih sedikit",
+      supportedLine: (count) => `${count} didukung sumber`,
+      flaggedLine: (count) => `${count} hanya sebagian didukung`,
+      removedLine: (count) => `${count} dihapus`,
+      inferenceLine: (count) => `${count} tafsiran`,
+      modelsLine: (primary, verify) => `Disusun dengan ${primary}. Diperiksa dengan ${verify}.`,
+      demoNote: "Mode demo. Kami tidak mencari di internet.",
     };
   }
   return {
-    insufficient: "Insufficient evidence",
-    contested: "Contested record",
-    brief: "Research brief",
-    disagree: "Sources disagree",
-    unanswered: "Not yet answered",
-    searched: "What was searched",
-    kept: "Passages kept",
-    unread: "Read, not cited",
-    verification: "Verification",
-    inference: "Inference",
-    check: "Check",
-    struck: "Struck",
+    insufficient: "We couldn't find enough evidence",
+    contested: "Sources don't agree",
+    brief: "Your brief",
+    disagree: "Sources don't agree",
+    unanswered: "We couldn't answer this",
+    searched: "Here's what we looked for",
+    kept: "Sources we used",
+    unread: "Pages we opened but didn't quote",
+    verification: "How we checked this",
+    inference: "Interpretation",
+    check: "Only partly supported",
+    struck: "Removed sentences",
     notRun: "Not run",
     instead: "What we found instead",
-    copy: "Copy Markdown",
+    copy: "Copy as text",
     download: "Download",
     copied: "Copied",
     basedOn: (count) => `Based on ${count} ${count === 1 ? "source" : "sources"} read`,
-    passages: (count) => `${count} ${count === 1 ? "passage" : "passages"}`,
-    checked: (count) => `${count} ${count === 1 ? "claim" : "claims"} checked`,
-    unchecked: "Unchecked",
-    fixture: "Fixture desk",
+    passages: (count) => `${count} ${count === 1 ? "source" : "sources"}`,
+    checked: (count) => `${count} ${count === 1 ? "sentence" : "sentences"} checked`,
+    unchecked: "Not checked yet",
+    fixture: "Demo mode",
+    removed: (count) => `We removed ${count} ${count === 1 ? "sentence" : "sentences"} because the sources didn't support them.`,
+    noAnswer: "We couldn't find an answer.",
+    sentenceInBrief: "The sentence in your brief",
+    quoteFound: "The quote we found",
+    openOriginal: "Open the original page",
+    quotedFromPage: "Quoted from the page",
+    searchPreview: "From the search preview (we couldn't open the full page)",
+    noHighlight: "We couldn't highlight an exact match. Please read the quote and decide if it supports the sentence.",
+    sourceHeading: (count) => `Source ${count}`,
+    close: "Close",
+    closeSource: "Close source",
+    citeHint: "Click a number to see the quote.",
+    showAll: "Show all",
+    showFewer: "Show fewer",
+    supportedLine: (count) => `${count} supported by a source`,
+    flaggedLine: (count) => `${count} only partly supported`,
+    removedLine: (count) => `${count} removed`,
+    inferenceLine: (count) => `${count} ${count === 1 ? "interpretation" : "interpretations"}`,
+    modelsLine: (primary, verify) => `Drafted with ${primary}. Checked with ${verify}.`,
+    demoNote: "Demo mode. We did not search the live web.",
   };
 }
 
 export function planFrameDetail(language: string, count: number): string {
   if (/^id\b|indones/i.test(language)) return `${count} jalur pertanyaan. Bahasa: ${language}.`;
-  return `${count} lines of inquiry. Language: ${language}.`;
+  return `${count} smaller questions.`;
 }
 
 export function planFrameTitle(language: string, recency: boolean, timeRange: string | null): string {
@@ -569,9 +629,78 @@ export function planFrameTitle(language: string, recency: boolean, timeRange: st
 export function trailPhaseLabel(language: string, phase: string): string {
   const indonesian = /^id\b|indones/i.test(language);
   const labels: Record<string, string> = indonesian
-    ? { plan: "Rencana", search: "Cari", read: "Baca", write: "Tulis", verify: "Periksa", gap: "Celah", done: "Selesai" }
-    : { plan: "Plan", search: "Search", read: "Read", write: "Write", verify: "Verify", gap: "Gap", done: "Done" };
+    ? {
+        plan: "Mengurai pertanyaan",
+        search: "Mencari",
+        read: "Membaca halaman",
+        write: "Menulis jawaban",
+        verify: "Memeriksa jawaban",
+        gap: "Yang belum ketemu",
+        done: "Selesai",
+      }
+    : {
+        plan: "Breaking down the question",
+        search: "Searching",
+        read: "Reading pages",
+        write: "Writing the answer",
+        verify: "Checking the answer",
+        gap: "Gaps",
+        done: "Done",
+      };
   return labels[phase] ?? phase;
+}
+
+export function trailTitle(language: string): string {
+  return /^id\b|indones/i.test(language) ? "Yang kami lakukan" : "What we did";
+}
+
+export function trailEmptyLabel(language: string): string {
+  return /^id\b|indones/i.test(language)
+    ? "Bagian ini akan menampilkan setiap pencarian saat berlangsung."
+    : "This side will show each search as it happens.";
+}
+
+export function searchStoppedLabel(language: string): string {
+  return /^id\b|indones/i.test(language) ? "Pencarian berhenti" : "Search stopped";
+}
+
+export function searchesUsedLabel(language: string, used: number, cap: number): string {
+  if (/^id\b|indones/i.test(language)) return `Pencarian yang dipakai: ${used} dari ${cap}`;
+  return `Searches used: ${used} of ${cap}`;
+}
+
+export function trailDecisionLabel(language: string, decision: "kept" | "discarded" | "failed" | "candidate"): string {
+  const indonesian = /^id\b|indones/i.test(language);
+  const labels = indonesian
+    ? { kept: "Dipakai", discarded: "Dilewati", failed: "Tidak bisa dibuka", candidate: "Kemungkinan sumber" }
+    : { kept: "Used", discarded: "Skipped", failed: "Couldn't open", candidate: "Possible source" };
+  return labels[decision];
+}
+
+function isCaptionLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > 160) return false;
+  if (/^(?:advertisement|iklan|sponsored)$/i.test(trimmed)) return true;
+  if (/^(?:getty images|shutterstock|alamy|ap photo|reuters)\b/i.test(trimmed) && trimmed.length <= 80) return true;
+  if (/^(?:image caption|photo caption|photo credit|caption|keterangan(?:\s+gambar)?|alt text)\s*[:.\-–—]/i.test(trimmed)) return true;
+  if (/^(?:photo|image|credit|gambar|foto)\s*[:.\-–—]\s+\S/i.test(trimmed)) return true;
+  if (/^fig(?:ure)?\.?\s*\d+\s*[:.\-–—]?\s*$/i.test(trimmed)) return true;
+  if (/^\[(?:image|photo|foto|gambar)[^\]]*\]$/i.test(trimmed)) return true;
+  return false;
+}
+
+/** Drop a leading image caption when the rest of the excerpt is still a real quote. */
+export function trimExcerptJunk(text: string): string {
+  const original = text.trim();
+  if (!original) return original;
+  let next = original.replace(/^(?:!\[[^\]]*\]\([^)]*\)\s*)+/, "").trim();
+  const lines = next.split(/\n+/);
+  while (lines.length > 1 && isCaptionLine(lines[0] ?? "")) lines.shift();
+  next = lines.join("\n").trim();
+  const inline = /^(?:image caption|photo caption|photo credit|caption|keterangan(?:\s+gambar)?|photo|image|credit|gambar|foto)\s*:\s+[\s\S]{0,160}?[.!?]\s+(?=\p{Lu})/u.exec(next);
+  if (inline && next.length - inline[0].length >= 40) next = next.slice(inline[0].length).trim();
+  if (next.length < 40) return original;
+  return next;
 }
 
 export function recencyDetail(language: string, recent: boolean): string {

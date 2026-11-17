@@ -15,7 +15,7 @@ const BODY_LIMIT = 8000;
 export async function POST(request: Request) {
   const config = getConfig();
   if (config.paused) {
-    return json(503, "The notebook is paused. New questions are not being opened.");
+    return json(503, "This site is paused. New questions are not being opened.");
   }
 
   const body = await readBody(request);
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
         emit({
           type: "error",
           phase: "inquiry",
-          message: `${providerMessage(error)} No brief was filed.`,
+          message: `${providerMessage(error)} We couldn't finish an answer.`,
           fatal: true,
         });
         emit({ type: "done", credits: 0, cap: config.maxCredits, insufficient: false, failed: true });
