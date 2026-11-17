@@ -54,10 +54,14 @@ export type LlmRequest = {
 export type LlmCompletion = {
   content: string;
   finishReason: string | null;
+  /** Model id that produced this completion, after any fallback. */
+  model?: string;
 };
 
 export type Llm = {
   complete(input: LlmRequest): Promise<string | LlmCompletion>;
+  /** Models that actually answered. Absent on clients that never fall back. */
+  answeredModels?: () => { primary: string; verify: string };
 };
 
 export type SearchRequest = {
@@ -124,6 +128,7 @@ export type Brief = {
   aside: Sentence[];
   searched: { subquestion: string; queries: string[] }[];
   passages: Passage[];
+  /** Models that produced the brief. After a fallback these are the ids that answered, not the configured defaults. */
   models: { primary: string; verify: string; mode: "live" | "mock" };
 };
 

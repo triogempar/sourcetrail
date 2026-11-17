@@ -11,11 +11,11 @@ import { parseDraft, readVerdicts, salvageVerdicts } from "@/lib/schema";
 
 describe("thinking-default models", () => {
   it("disables thinking for DeepSeek V4 and Qwen3", () => {
-    expect(modelThinksByDefault("deepseek-ai/DeepSeek-V4.1-Flash")).toBe(true);
-    expect(modelThinksByDefault("Qwen/Qwen3-235B-A22B-Instruct-2507")).toBe(true);
+    expect(modelThinksByDefault("deepseek-ai/DeepSeek-V4.1-Flash-1017")).toBe(true);
+    expect(modelThinksByDefault("Qwen/Qwen3-30B-A3B-Instruct-2507")).toBe(true);
     expect(modelThinksByDefault("openai/gpt-oss-120b")).toBe(false);
     const body = buildChatCompletionBody({
-      model: "deepseek-ai/DeepSeek-V4.1-Flash",
+      model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
       system: "sys",
       user: "user",
       maxTokens: 1600,

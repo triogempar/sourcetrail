@@ -1,4 +1,11 @@
 import { isAbort, isTimeout, ProviderError } from "@/lib/errors";
+import {
+  DEFAULT_FALLBACK_MODELS,
+  DEFAULT_VERIFY_FALLBACK_MODELS,
+  ModelUnavailableError,
+  modelChain,
+  shouldRetryWithNextModel,
+} from "@/lib/fallback";
 import { clip, withTimeout } from "@/lib/text";
 import type { Llm, LlmCompletion, LlmRequest, LlmTask } from "@/lib/types";
 
@@ -100,14 +107,68 @@ async function safeBody(response: Response): Promise<string> {
 }
 
 export class NebiusClient implements Llm {
-  constructor(private readonly options: { apiKey: string; baseUrl: string; timeoutMs: number }) {}
+  private readonly failed = new Set<string>();
+  private readonly answered: { primary: string; verify: string };
+  private lastFailure: ModelUnavailableError | null = null;
+
+  constructor(private readonly options: {
+    apiKey: string;
+    baseUrl: string;
+    timeoutMs: number;
+    models?: { primary: string; verify: string };
+    fallbacks?: readonly string[];
+    verifyFallbacks?: readonly string[];
+  }) {
+    this.answered = {
+      primary: options.models?.primary ?? "",
+      verify: options.models?.verify ?? "",
+    };
+  }
+
+  answeredModels(): { primary: string; verify: string } {
+    return { primary: this.answered.primary, verify: this.answered.verify };
+  }
 
   async complete(input: LlmRequest): Promise<LlmCompletion> {
+    const extras = input.task === "verify"
+      ? (this.options.verifyFallbacks ?? DEFAULT_VERIFY_FALLBACK_MODELS)
+      : (this.options.fallbacks ?? DEFAULT_FALLBACK_MODELS);
+    const models = modelChain(input.model, extras, this.failed);
+    if (models.length === 0) {
+      throw this.lastFailure ?? new ProviderError("nebius", 404, "No Nebius model left in the fallback chain.");
+    }
     const url = `${this.options.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const budget = input.timeoutMs ?? this.options.timeoutMs;
-    const signal = withTimeout(input.signal, timeoutForTask(input.task, budget));
+    let last: ModelUnavailableError | null = null;
+    for (const model of models) {
+      const signal = withTimeout(input.signal, timeoutForTask(input.task, budget));
+      try {
+        const completion = await this.completeWithModel(url, input, model, signal);
+        if (input.task === "verify") this.answered.verify = model;
+        else this.answered.primary = model;
+        return completion;
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        if (error instanceof ModelUnavailableError) {
+          this.failed.add(model);
+          this.lastFailure = error;
+          last = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw last ?? new ProviderError("nebius", 404, "No Nebius model left in the fallback chain.");
+  }
+
+  private async completeWithModel(
+    url: string,
+    input: LlmRequest,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<LlmCompletion> {
     const body = buildChatCompletionBody({
-      model: input.model,
+      model,
       system: input.system,
       user: input.user,
       maxTokens: input.maxTokens,
@@ -120,14 +181,11 @@ export class NebiusClient implements Llm {
         delete body.chat_template_kwargs;
         response = await this.post(url, body, signal);
       } else {
-        console.error(`nebius ${response.status} ${detail}`);
-        throw new ProviderError("nebius", response.status, nebiusErrorMessage(response.status));
+        this.fail(response.status, detail, model);
       }
     }
     if (!response.ok) {
-      const detail = await safeBody(response);
-      console.error(`nebius ${response.status} ${detail}`);
-      throw new ProviderError("nebius", response.status, nebiusErrorMessage(response.status));
+      this.fail(response.status, await safeBody(response), model);
     }
     let data: unknown;
     try {
@@ -143,7 +201,17 @@ export class NebiusClient implements Llm {
         : "Nebius returned an empty completion.";
       throw new ProviderError("nebius", response.status, message);
     }
-    return { content: text, finishReason: readFinishReason(data) };
+    return { content: text, finishReason: readFinishReason(data), model };
+  }
+
+  private fail(status: number, detail: string, model: string): never {
+    const retry = shouldRetryWithNextModel(status, detail);
+    console.error(retry
+      ? `nebius ${status} on ${model}; trying the next model. ${detail}`
+      : `nebius ${status} on ${model} ${detail}`);
+    const message = nebiusErrorMessage(status);
+    if (retry) throw new ModelUnavailableError(status, message);
+    throw new ProviderError("nebius", status, message);
   }
 
   private async post(url: string, body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
@@ -160,7 +228,7 @@ export class NebiusClient implements Llm {
       });
     } catch (error) {
       if (isAbort(error)) throw error;
-      if (isTimeout(error)) throw new ProviderError("nebius", "timeout", "Nebius timed out before answering.");
+      if (isTimeout(error)) throw new ModelUnavailableError("timeout", "Nebius timed out before answering.");
       throw new ProviderError("nebius", 0, "Nebius could not be reached.");
     }
   }

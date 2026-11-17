@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runResearch } from "@/lib/agent";
 import { EXAMPLES } from "@/lib/examples";
 import type { RuntimeConfig } from "@/lib/env";
-import { resolveModels } from "@/lib/env";
+import { resolveFallbacks, resolveModels } from "@/lib/env";
 import { ProviderError } from "@/lib/errors";
 import { createMockDeps } from "@/lib/mock/providers";
 import type { AgentDeps, Llm, ResearchEvent, SearchClient } from "@/lib/types";
@@ -16,8 +16,12 @@ function fixtureConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
     tavilyKey: "",
     nebiusBaseUrl: "https://api.tokenfactory.nebius.com/v1",
     models: {
-      primary: "deepseek-ai/DeepSeek-V4.1-Flash",
-      verify: "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      primary: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      verify: "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    },
+    fallbacks: {
+      primary: ["MiniMaxAI/MiniMax-M3", "zai-org/GLM-5.3-Flash"],
+      verify: ["zai-org/GLM-5.3-Flash", "MiniMaxAI/MiniMax-M3"],
     },
     maxCredits: 8,
     tokens: { plan: 700, rewrite: 160, write: 1600, verify: 900 },
@@ -269,11 +273,12 @@ describe("resolveModels", () => {
   it("refuses to verify with the same model that drafted", () => {
     const previousModel = process.env.NEBIUS_MODEL;
     const previousVerify = process.env.NEBIUS_VERIFY_MODEL;
-    process.env.NEBIUS_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
-    process.env.NEBIUS_VERIFY_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
+    process.env.NEBIUS_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
+    process.env.NEBIUS_VERIFY_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
     try {
       const models = resolveModels();
       expect(models.verify).not.toBe(models.primary);
+      expect(models.verify).toBe("Qwen/Qwen3-30B-A3B-Instruct-2507");
     } finally {
       if (previousModel === undefined) delete process.env.NEBIUS_MODEL;
       else process.env.NEBIUS_MODEL = previousModel;
@@ -281,4 +286,37 @@ describe("resolveModels", () => {
       else process.env.NEBIUS_VERIFY_MODEL = previousVerify;
     }
   });
+
+  it("defaults to the live Token Factory ids and the fallback chains", () => {
+    const saved = {
+      model: process.env.NEBIUS_MODEL,
+      verify: process.env.NEBIUS_VERIFY_MODEL,
+      fallback: process.env.NEBIUS_FALLBACK_MODELS,
+      verifyFallback: process.env.NEBIUS_VERIFY_FALLBACK_MODELS,
+    };
+    delete process.env.NEBIUS_MODEL;
+    delete process.env.NEBIUS_VERIFY_MODEL;
+    delete process.env.NEBIUS_FALLBACK_MODELS;
+    delete process.env.NEBIUS_VERIFY_FALLBACK_MODELS;
+    try {
+      expect(resolveModels()).toEqual({
+        primary: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        verify: "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      });
+      expect(resolveFallbacks()).toEqual({
+        primary: ["MiniMaxAI/MiniMax-M3", "zai-org/GLM-5.3-Flash"],
+        verify: ["zai-org/GLM-5.3-Flash", "MiniMaxAI/MiniMax-M3"],
+      });
+    } finally {
+      restoreEnv("NEBIUS_MODEL", saved.model);
+      restoreEnv("NEBIUS_VERIFY_MODEL", saved.verify);
+      restoreEnv("NEBIUS_FALLBACK_MODELS", saved.fallback);
+      restoreEnv("NEBIUS_VERIFY_FALLBACK_MODELS", saved.verifyFallback);
+    }
+  });
 });
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

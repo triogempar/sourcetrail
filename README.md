@@ -2,7 +2,7 @@
 
 SourceTrail is a research notebook. You file one question. It plans a few lines of inquiry, searches the web, reads the strongest pages, and files a short brief in which every factual sentence points at a verbatim passage. A second pass checks those sentences against the passages and strikes anything they do not support.
 
-It was built for the [ODSC × Nebius hackathon](https://hackathon.odsc.ai).
+It was built for the [ODSC × Nebius hackathon](https://hackathon.odsc.ai). The live desk is [https://sourcetrail-chi.vercel.app](https://sourcetrail-chi.vercel.app).
 
 ## Who it is for
 
@@ -41,6 +41,8 @@ No page is stored. There is no database. Closing the tab drops the brief, unless
 Model output is parsed as JSON, validated, and repaired once. A truncated verifier reply is salvaged when it still contains finished verdicts. A second invalid reply stops that phase in the open. Nebius and Tavily errors and timeouts are written into the trail. The brief is emitted only after verification, so a dropped connection does not leave an unchecked draft on the page.
 
 DeepSeek V4 and other thinking-default Nebius models (Qwen3, QwQ) are called with `chat_template_kwargs: { thinking: false }`. Left on, DeepSeek V4.1 Flash spends the whole `max_tokens` budget on reasoning and returns an empty completion, which blows the write-step timeout after the search credits are already spent. A rejected template field is retried once without it. Auth, billing, and rate-limit errors from Tavily stop the inquiry before another search is purchased.
+
+If the configured Nebius model is missing (`404` / `model_not_found`), rate-limited (`429`), times out, or returns a server error (`5xx`), the same prompt is sent to the next id in `NEBIUS_FALLBACK_MODELS` (plan, rewrite, and write) or `NEBIUS_VERIFY_FALLBACK_MODELS` (verification). A model that fails is skipped for the rest of that question, including the other role when the id appears in both chains. Auth failures (`401` / `403`) and billing refusals (`402`) are not retried on another model. The brief names the model that actually answered. Fallback ids have to be at least 300B parameters, not a Kimi model, and not priced above the primary. MiniMax-M3 is 428B at $0.30 / $1.20 per million tokens. GLM-5.3-Flash is 320B at $0.15 / $0.50.
 
 ## Cost safety
 
@@ -101,8 +103,10 @@ Live desk:
 # .env.local
 NEBIUS_API_KEY=...
 TAVILY_API_KEY=...
-NEBIUS_MODEL=deepseek-ai/DeepSeek-V4.1-Flash
-NEBIUS_VERIFY_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
+NEBIUS_MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
+NEBIUS_VERIFY_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507
+NEBIUS_FALLBACK_MODELS=MiniMaxAI/MiniMax-M3,zai-org/GLM-5.3-Flash
+NEBIUS_VERIFY_FALLBACK_MODELS=zai-org/GLM-5.3-Flash,MiniMaxAI/MiniMax-M3
 ```
 
 ```bash
@@ -117,8 +121,10 @@ Open [http://localhost:3000](http://localhost:3000).
 | --- | --- | --- |
 | `NEBIUS_API_KEY` | Live mode | Nebius Token Factory key. Sent only to `api.tokenfactory.nebius.com`. |
 | `NEBIUS_BASE_URL` | No | Default `https://api.tokenfactory.nebius.com/v1`. |
-| `NEBIUS_MODEL` | No | Drafting model. Default `deepseek-ai/DeepSeek-V4.1-Flash`. |
-| `NEBIUS_VERIFY_MODEL` | No | Second model. Default `Qwen/Qwen3-235B-A22B-Instruct-2507`. If it matches the drafter, the app switches to a different known id (`openai/gpt-oss-120b` or `zai-org/GLM-5.3`). |
+| `NEBIUS_MODEL` | No | Drafting model. Default `deepseek-ai/DeepSeek-V4.1-Flash-1017`. `deepseek-ai/DeepSeek-V4.1-Flash` was retired on 9 Nov 2026. |
+| `NEBIUS_VERIFY_MODEL` | No | Second model. Default `Qwen/Qwen3-30B-A3B-Instruct-2507`. `Qwen/Qwen3-235B-A22B-Instruct-2507` is deprecated. If the verifier matches the drafter, the app switches to a different known id (`Qwen/Qwen3-30B-A3B-Instruct-2507`, `openai/gpt-oss-120b`, or `zai-org/GLM-5.3`). |
+| `NEBIUS_FALLBACK_MODELS` | No | Comma-separated spares for plan, rewrite, and write. Default `MiniMaxAI/MiniMax-M3,zai-org/GLM-5.3-Flash`. Tried, in order, after `404` / `model_not_found`, `5xx`, `429`, or a timeout. Not tried after `401`, `403`, or billing (`402`). |
+| `NEBIUS_VERIFY_FALLBACK_MODELS` | No | Spares for the verifier. Default `zai-org/GLM-5.3-Flash,MiniMaxAI/MiniMax-M3`. Same failure rules. Each spare must be at least 300B parameters, not a Kimi model, and not priced above the primary. MiniMax-M3 is 428B at $0.30 / $1.20. GLM-5.3-Flash is 320B at $0.15 / $0.50. |
 | `NEBIUS_TIMEOUT_MS` | No | Budget for a Nebius call. Default 40s, clamped between 5s and 55s. Plan is capped at 30s and a rewrite at 20s so a slow run still fits the 180s Hobby function limit. |
 | `TAVILY_API_KEY` | Live mode | Bearer token for `https://api.tavily.com/search` and `/extract`. |
 | `TAVILY_SEARCH_TIMEOUT_MS` | No | Default 14s. |
@@ -162,7 +168,7 @@ The app is a Next.js App Router project with no database and no paid Vercel add-
 1. Push the repository to GitHub.
 2. Import it at [vercel.com/new](https://vercel.com/new). Framework preset: Next.js. No extra build command.
 3. Add the environment variables from the table above. For a live desk set `NEBIUS_API_KEY` and `TAVILY_API_KEY`, and leave `SOURCETRAIL_MOCK` unset. For a public demo with no spend, set `SOURCETRAIL_MOCK=1`.
-4. Deploy. The site reads `SOURCETRAIL_DISABLED` on each request, so pausing it does not require a new build. Redeploy is still the right move after changing a model id if you want every instance to pick it up immediately; dynamic `process.env` reads are not inlined.
+4. Deploy. The live desk is [https://sourcetrail-chi.vercel.app](https://sourcetrail-chi.vercel.app). The site reads `SOURCETRAIL_DISABLED` on each request, so pausing it does not require a new build. Redeploy is still the right move after changing a model id if you want every instance to pick it up immediately; dynamic `process.env` reads are not inlined.
 
 Do not prefix the keys with `NEXT_PUBLIC_`. They stay on the server.
 

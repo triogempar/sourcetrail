@@ -1,3 +1,11 @@
+import {
+  DEFAULT_FALLBACK_MODELS,
+  DEFAULT_PRIMARY_MODEL,
+  DEFAULT_VERIFY_FALLBACK_MODELS,
+  DEFAULT_VERIFY_MODEL,
+  parseModelList,
+} from "@/lib/fallback";
+
 export type RuntimeConfig = {
   mock: boolean;
   paused: boolean;
@@ -6,6 +14,7 @@ export type RuntimeConfig = {
   tavilyKey: string;
   nebiusBaseUrl: string;
   models: { primary: string; verify: string };
+  fallbacks: { primary: string[]; verify: string[] };
   maxCredits: number;
   tokens: { plan: number; rewrite: number; write: number; verify: number };
   nebiusTimeoutMs: number;
@@ -28,8 +37,8 @@ export type PublicConfig = {
   maxQuestionLength: number;
 };
 
-const VERIFY_FALLBACKS = [
-  "Qwen/Qwen3-235B-A22B-Instruct-2507",
+const SAME_MODEL_ALTERNATES = [
+  "Qwen/Qwen3-30B-A3B-Instruct-2507",
   "openai/gpt-oss-120b",
   "zai-org/GLM-5.3",
 ];
@@ -54,10 +63,17 @@ export const DEFAULT_VERIFY_TOKENS = 1_600;
 export const DEFAULT_WRITE_TOKENS = 3_200;
 
 export function resolveModels(): { primary: string; verify: string } {
-  const primary = read("NEBIUS_MODEL") || "deepseek-ai/DeepSeek-V4.1-Flash";
-  const requested = read("NEBIUS_VERIFY_MODEL") || "Qwen/Qwen3-235B-A22B-Instruct-2507";
-  const verify = requested !== primary ? requested : VERIFY_FALLBACKS.find((id) => id !== primary) ?? requested;
+  const primary = read("NEBIUS_MODEL") || DEFAULT_PRIMARY_MODEL;
+  const requested = read("NEBIUS_VERIFY_MODEL") || DEFAULT_VERIFY_MODEL;
+  const verify = requested !== primary ? requested : SAME_MODEL_ALTERNATES.find((id) => id !== primary) ?? requested;
   return { primary, verify };
+}
+
+export function resolveFallbacks(): { primary: string[]; verify: string[] } {
+  return {
+    primary: parseModelList(read("NEBIUS_FALLBACK_MODELS"), DEFAULT_FALLBACK_MODELS),
+    verify: parseModelList(read("NEBIUS_VERIFY_FALLBACK_MODELS"), DEFAULT_VERIFY_FALLBACK_MODELS),
+  };
 }
 
 export function getConfig(): RuntimeConfig {
@@ -65,6 +81,7 @@ export function getConfig(): RuntimeConfig {
   const tavilyKey = read("TAVILY_API_KEY") ?? "";
   const mock = read("SOURCETRAIL_MOCK") === "1";
   const models = resolveModels();
+  const fallbacks = resolveFallbacks();
   return {
     mock,
     paused: read("SOURCETRAIL_DISABLED") === "1",
@@ -73,6 +90,7 @@ export function getConfig(): RuntimeConfig {
     tavilyKey,
     nebiusBaseUrl: (read("NEBIUS_BASE_URL") || "https://api.tokenfactory.nebius.com/v1").replace(/\/$/, ""),
     models,
+    fallbacks,
     maxCredits: intInRange("SOURCETRAIL_MAX_TAVILY_CREDITS", 8, 1, 10),
     tokens: {
       plan: intInRange("SOURCETRAIL_MAX_TOKENS_PLAN", 700, 200, 1200),

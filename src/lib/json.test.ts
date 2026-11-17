@@ -70,7 +70,7 @@ describe("completeJson", () => {
     const draft = await completeJson({
       llm,
       task: "write",
-      model: "deepseek-ai/DeepSeek-V4.1-Flash",
+      model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
       system: "sys",
       user: "Question",
       maxTokens: 3200,

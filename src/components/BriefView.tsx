@@ -76,7 +76,14 @@ export function BriefView({
           <p className="dateline">
             <span>{labels.passages(brief.passages.length)}</span>
             <span>{summary ? labels.checked(summary.checked) : labels.unchecked}</span>
-            <span>{brief.models.mode === "mock" ? labels.fixture : brief.models.primary}</span>
+            {brief.models.mode === "mock" ? (
+              <span>{labels.fixture}</span>
+            ) : (
+              <>
+                <span>{brief.models.primary}</span>
+                <span>{brief.models.verify}</span>
+              </>
+            )}
           </p>
         </div>
         <div className="export">
