@@ -45,9 +45,9 @@ describe("markdown export", () => {
     });
     expect(markdown).toContain("[^1]");
     expect(markdown).toContain("Harbor Desk");
-    expect(markdown).toContain("*(Inference)*");
-    expect(markdown).toContain("Not yet answered");
-    expect(markdown).toContain("Fixture desk");
+    expect(markdown).toContain("*(Interpretation)*");
+    expect(markdown).toContain("We couldn't answer this");
+    expect(markdown).toContain("Demo mode");
   });
 
   it("puts an off-topic note below the answer and keeps its footnote", () => {

@@ -141,7 +141,13 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     lines.push(
       `## ${labels.verification}`,
       "",
-      `${summary.checked} checked, ${summary.supported} supported, ${summary.flagged} flagged, ${summary.dropped} struck, ${summary.inferences} inferences.`,
+      [
+        labels.checked(summary.checked),
+        labels.supportedLine(summary.supported),
+        labels.flaggedLine(summary.flagged),
+        labels.removedLine(summary.dropped),
+        labels.inferenceLine(summary.inferences),
+      ].join(". ") + ".",
       "",
       summary.note,
       "",
@@ -174,7 +180,7 @@ export function briefToMarkdown(brief: Brief, summary: VerificationSummary | nul
     lines.push("");
   }
   if (brief.models.mode === "mock") {
-    lines.push("Fixture desk. Nebius and Tavily were not called.", "");
+    lines.push(labels.demoNote, "");
   } else {
     lines.push(`Drafted with ${brief.models.primary}. Checked with ${brief.models.verify}.`, "");
   }

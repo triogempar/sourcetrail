@@ -99,7 +99,7 @@ export async function runResearch(
 
     const allFailed = searched.every((result) => result.error && result.hits.length === 0);
     if (allFailed) {
-      const message = "Search failed on every line of inquiry. No brief was filed, because there are no passages to cite.";
+      const message = "Search failed on every smaller question. We couldn't finish an answer, because there are no sources to cite.";
       emit({ type: "error", phase: "search", message, fatal: true });
       emit({ type: "done", credits: ledger.spent, cap: ledger.cap, insufficient: false, failed: true });
       return { brief: null, summary: null, error: message, credits: ledger.spent };
@@ -340,7 +340,7 @@ export async function runResearch(
     if (isAbort(error)) {
       return { brief: null, summary: null, error: null, credits: ledger.spent };
     }
-    const message = `${providerMessage(error)} No brief was filed.`;
+    const message = `${providerMessage(error)} We couldn't finish an answer.`;
     emit({ type: "error", phase: "inquiry", message, fatal: true });
     emit({ type: "done", credits: ledger.spent, cap: ledger.cap, insufficient: false, failed: true });
     return { brief: null, summary: null, error: message, credits: ledger.spent };
@@ -441,7 +441,7 @@ export async function runResearch(
             sources: found.map((item) => sourceRow(
               item,
               isUsableHit(item) ? "candidate" : "discarded",
-              isUsableHit(item) ? "Candidate" : "Weak match",
+              isUsableHit(item) ? "Strong enough to consider" : "Weak match",
             )),
           },
         });
@@ -527,7 +527,7 @@ function searchNotes(results: SubqResult[]): string[] {
     notes.push(`${failed.length} ${failed.length === 1 ? "line" : "lines"} of inquiry failed: ${failed[0]?.error ?? "the search failed"}.`);
   }
   if (weak.length > 0) {
-    notes.push(`${weak.length} ${weak.length === 1 ? "line" : "lines"} of inquiry returned no strong page.`);
+    notes.push(`${weak.length} smaller ${weak.length === 1 ? "question" : "questions"} returned no strong page.`);
   }
   return notes;
 }
