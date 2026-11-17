@@ -27,7 +27,7 @@ const brief: Brief = {
     text: "A Hamburg pilot reported a 612 km highway range.",
     origin: "extract",
   }],
-  models: { primary: "deepseek-ai/DeepSeek-V4.1-Flash", verify: "Qwen/Qwen3-235B-A22B-Instruct-2507", mode: "mock" },
+  models: { primary: "deepseek-ai/DeepSeek-V4.1-Flash-1017", verify: "Qwen/Qwen3-30B-A3B-Instruct-2507", mode: "mock" },
 };
 
 describe("markdown export", () => {

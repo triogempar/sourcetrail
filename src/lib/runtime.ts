@@ -23,6 +23,9 @@ export function createRuntime(question: string, signal?: AbortSignal, config = g
       apiKey: config.nebiusKey,
       baseUrl: config.nebiusBaseUrl,
       timeoutMs: config.nebiusTimeoutMs,
+      models: config.models,
+      fallbacks: config.fallbacks.primary,
+      verifyFallbacks: config.fallbacks.verify,
     }),
     search: new TavilyClient({
       apiKey: config.tavilyKey,

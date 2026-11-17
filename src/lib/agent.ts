@@ -314,7 +314,7 @@ export async function runResearch(
       aside: adjudicated.aside,
       searched: searchedLog,
       passages,
-      models: { ...deps.models, mode: deps.mode },
+      models: briefModels(deps),
     };
     emit({
       type: "trail",
@@ -551,7 +551,16 @@ function blankBrief(
     aside: [],
     searched,
     passages: [],
-    models: { ...deps.models, mode: deps.mode },
+    models: briefModels(deps),
+  };
+}
+
+function briefModels(deps: AgentDeps): Brief["models"] {
+  const answered = deps.llm.answeredModels?.();
+  return {
+    primary: answered?.primary || deps.models.primary,
+    verify: answered?.verify || deps.models.verify,
+    mode: deps.mode,
   };
 }
 
